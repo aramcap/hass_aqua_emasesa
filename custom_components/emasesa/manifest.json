@@ -1,0 +1,12 @@
+{
+  "domain": "emasesa",
+  "name": "EMASESA (Consumo de agua)",
+  "codeowners": ["@aramcap"],
+  "config_flow": true,
+  "documentation": "https://github.com/aramcap/hass_aqua_emasesa",
+  "issue_tracker": "https://github.com/aramcap/hass_aqua_emasesa/issues",
+  "integration_type": "hub",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}

@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Conectar con EMASESA",
+        "description": "Introduce las credenciales de tu Oficina Online de EMASESA (las mismas con las que accedes en emasesaonline.com).",
+        "data": {
+          "username": "Usuario (DNI/NIE)",
+          "password": "Contraseña",
+          "name": "Nombre para esta integración"
+        }
+      },
+      "2fa": {
+        "title": "Código de verificación",
+        "description": "EMASESA ha enviado un código de verificación (SMS o correo) para confirmar este nuevo dispositivo. Introdúcelo a continuación — solo hace falta una vez: a partir de ahora este dispositivo quedará recordado como de confianza.",
+        "data": {
+          "code": "Código de verificación"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconectar con EMASESA",
+        "description": "EMASESA ha dejado de confiar en este dispositivo y necesita verificarlo de nuevo. Introduce tu contraseña para continuar.",
+        "data": {
+          "password": "Contraseña"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Usuario o contraseña incorrectos.",
+      "invalid_2fa_code": "Código de verificación incorrecto o caducado.",
+      "cannot_connect": "No se ha podido conectar con EMASESA.",
+      "unknown": "Error inesperado."
+    },
+    "abort": {
+      "already_configured": "Esta cuenta de EMASESA ya está configurada.",
+      "reauth_successful": "Reautenticación completada correctamente."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opciones de EMASESA",
+        "data": {
+          "scan_interval_minutes": "Minutos entre actualizaciones"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ultimo_dia": {
+        "name": "Último día"
+      },
+      "consumo_acumulado": {
+        "name": "Consumo acumulado"
+      }
+    }
+  }
+}

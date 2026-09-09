@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to EMASESA",
+        "description": "Enter the credentials of your EMASESA Oficina Online account (the same ones you use at emasesaonline.com).",
+        "data": {
+          "username": "Username (DNI/NIE)",
+          "password": "Password",
+          "name": "Name for this integration"
+        }
+      },
+      "2fa": {
+        "title": "Verification code",
+        "description": "EMASESA has sent a verification code (SMS or email) to confirm this new device. Enter it below — this is only needed once: this device will then be remembered as trusted.",
+        "data": {
+          "code": "Verification code"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Reconnect to EMASESA",
+        "description": "EMASESA has stopped trusting this device and needs to verify it again. Enter your password to continue.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid username or password.",
+      "invalid_2fa_code": "Incorrect or expired verification code.",
+      "cannot_connect": "Could not connect to EMASESA.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This EMASESA account is already configured.",
+      "reauth_successful": "Reauthentication successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EMASESA options",
+        "data": {
+          "scan_interval_minutes": "Minutes between updates"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "ultimo_dia": {
+        "name": "Latest day"
+      },
+      "consumo_acumulado": {
+        "name": "Cumulative consumption"
+      }
+    }
+  }
+}
