@@ -215,14 +215,16 @@ class EmasesaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     @staticmethod
     @callback
     def async_get_options_flow(config_entry: config_entries.ConfigEntry) -> "EmasesaOptionsFlow":
-        return EmasesaOptionsFlow(config_entry)
+        return EmasesaOptionsFlow()
 
 
 class EmasesaOptionsFlow(config_entries.OptionsFlow):
     """Permite ajustar la frecuencia de consulta."""
 
-    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
-        self.config_entry = config_entry
+    # No guardamos `config_entry` a mano: desde que Home Assistant lo
+    # deprecó, asignarlo en __init__ termina lanzando un error (500 al
+    # abrir "Configurar"). La clase base ya expone `self.config_entry`
+    # resuelto a partir del flujo en curso.
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         if user_input is not None:
