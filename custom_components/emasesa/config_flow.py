@@ -115,7 +115,12 @@ class EmasesaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         verificación pendiente en vez de con un error).
         """
         self._device_id = generate_device_id()
-        self._session = async_create_clientsession(self.hass)
+        if self._session is None:
+            # `async_create_clientsession` registra su propio cierre (al
+            # terminar el flujo/HA se apaga); no la cerramos a mano, así
+            # que la reutilizamos entre reintentos en vez de crear una
+            # sesión nueva cada vez que el usuario falla el login.
+            self._session = async_create_clientsession(self.hass)
         self._api = EmasesaApiClient(
             self._session, self._username, self._password, self._device_id
         )
@@ -124,14 +129,11 @@ class EmasesaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         except EmasesaTwoFactorRequired:
             return {}
         except EmasesaAuthError:
-            await self._async_close_session()
             return {"base": "invalid_auth"}
         except EmasesaApiError:
-            await self._async_close_session()
             return {"base": "cannot_connect"}
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Error inesperado validando credenciales de EMASESA")
-            await self._async_close_session()
             return {"base": "unknown"}
         return {}
 
@@ -161,7 +163,6 @@ class EmasesaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self.async_show_form(step_id="2fa", data_schema=schema, errors=errors)
 
     async def _async_finish(self) -> config_entries.FlowResult:
-        await self._async_close_session()
         data = {
             CONF_USERNAME: self._username,
             CONF_PASSWORD: self._password,
@@ -172,13 +173,6 @@ class EmasesaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             await self.hass.config_entries.async_reload(self._reauth_entry.entry_id)
             return self.async_abort(reason="reauth_successful")
         return self.async_create_entry(title=self._name, data=data)
-
-    async def _async_close_session(self) -> None:
-        # La sesión de validación es solo para el config flow; el
-        # coordinator abre la suya propia al configurar la entrada.
-        if self._session is not None:
-            await self._session.close()
-            self._session = None
 
     # -- reauth (el device_id ha dejado de ser de confianza) ---------------
 

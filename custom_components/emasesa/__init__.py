@@ -38,10 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_load_storage()
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
-        "coordinator": coordinator,
-        "session": session,
-    }
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"coordinator": coordinator}
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
@@ -56,8 +53,11 @@ async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> Non
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Descarga una entrada de EMASESA."""
+    # No cerramos la sesión aquí: `async_create_clientsession` ya la registra
+    # para cerrarse sola al descargar esta entrada (y al apagar Home
+    # Assistant). Cerrarla a mano dispara el aviso "closes the Home
+    # Assistant aiohttp session" de homeassistant.helpers.frame.
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        data = hass.data[DOMAIN].pop(entry.entry_id)
-        await data["session"].close()
+        hass.data[DOMAIN].pop(entry.entry_id)
     return unload_ok
