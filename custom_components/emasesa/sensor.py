@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceEntryType
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -26,6 +26,7 @@ async def async_setup_entry(
             EmasesaLatestDaySensor(coordinator, entry),
             EmasesaLatestDateSensor(coordinator, entry),
             EmasesaCumulativeSensor(coordinator, entry),
+            EmasesaLastFetchSensor(coordinator, entry),
         ]
     )
 
@@ -122,3 +123,24 @@ class EmasesaCumulativeSensor(EmasesaBaseEntity):
     def native_value(self) -> float | None:
         data = self.coordinator.data or {}
         return data.get("cumulative_total")
+
+
+class EmasesaLastFetchSensor(EmasesaBaseEntity):
+    """
+    Fecha y hora de la última consulta a EMASESA que ha terminado sin
+    error (no confundir con la fecha de la lectura en sí, que EMASESA
+    publica con uno o dos días de retraso: ver `ultima_fecha_lectura`).
+    """
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:clock-check-outline"
+    _attr_translation_key = "ultima_actualizacion"
+
+    def __init__(self, coordinator: EmasesaCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_ultima_actualizacion"
+
+    @property
+    def native_value(self) -> datetime | None:
+        return self.coordinator.last_fetch_success

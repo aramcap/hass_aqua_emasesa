@@ -56,6 +56,9 @@
       },
       "consumo_acumulado": {
         "name": "Consumo acumulado"
+      },
+      "ultima_actualizacion": {
+        "name": "Última actualización"
       }
     }
   }

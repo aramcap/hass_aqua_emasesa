@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .api import EmasesaApiClient, EmasesaApiError, EmasesaAuthError, EmasesaTwoFactorRequired
 from .const import CONSULTA_VENTANA_DIAS, DOMAIN, STORAGE_VERSION
@@ -40,6 +41,11 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
         self._cumulative_total: float = 0.0
         self._counted_dates: set[str] = set()
         self._storage_loaded = False
+        # Momento (UTC) del último fetch a EMASESA que ha terminado sin
+        # error, para un sensor de diagnóstico "última actualización" —
+        # distinto de la fecha de la lectura en sí, que la publica
+        # EMASESA con uno o dos días de retraso.
+        self.last_fetch_success: datetime | None = None
 
     async def async_load_storage(self) -> None:
         """Carga el contador acumulado persistido (llamar antes del primer refresh)."""
@@ -98,6 +104,8 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
             if len(self._counted_dates) > _MAX_FECHAS_RECORDADAS:
                 self._counted_dates = set(sorted(self._counted_dates)[-_MAX_FECHAS_RECORDADAS:])
             await self._async_save_storage()
+
+        self.last_fetch_success = dt_util.utcnow()
 
         return {
             "readings": readings,

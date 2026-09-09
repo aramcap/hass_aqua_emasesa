@@ -34,11 +34,12 @@ Integración personalizada (no oficial) para leer el consumo de agua de [EMASESA
 
 ## Qué aporta
 
-Por cada cuenta configurada, crea un dispositivo EMASESA con tres sensores:
+Por cada cuenta configurada, crea un dispositivo EMASESA con cuatro sensores:
 
 - ✅ **Último día** (`sensor.<nombre>_ultimo_dia`): litros del último día con lectura disponible (normalmente ayer; EMASESA suele tardar un día o dos en publicar la lectura). Incluye como atributo el histórico de los últimos días consultados (`historico_reciente`).
 - ✅ **Fecha de la última lectura** (`sensor.<nombre>_ultima_fecha_lectura`): fecha (tipo `date`) a la que corresponde ese último día con dato disponible, útil para detectar si EMASESA lleva tiempo sin publicar lecturas nuevas.
 - ✅ **Consumo acumulado** (`sensor.<nombre>_consumo_acumulado`): contador que solo crece (litros), pensado para añadirlo como fuente de **Agua** en el **Panel de Energía** de Home Assistant. Como EMASESA no ofrece una lectura de contador continua (solo consumos por día), la propia integración va sumando cada día nuevo una única vez y guarda ese total en disco para no perderlo si reinicias Home Assistant.
+- ✅ **Última actualización** (`sensor.<nombre>_ultima_actualizacion`, sensor de diagnóstico): fecha y hora en que la integración consultó EMASESA por última vez sin error — no confundir con la fecha de la lectura en sí, que EMASESA publica con retraso.
 - ✅ Configuración por UI (Config Flow), incluida la verificación por SMS/email
 - ✅ Reautenticación guiada desde la propia integración si EMASESA deja de confiar en el dispositivo
 - ✅ Intervalo de actualización configurable
@@ -174,7 +175,7 @@ Después revisa los logs en **Ajustes → Sistema → Registros**.
 - [ ] Home Assistant reiniciado tras la instalación
 - [ ] Integración añadida desde la UI con tu usuario y contraseña
 - [ ] Código de verificación introducido si se ha solicitado
-- [ ] Los sensores `ultimo_dia`, `ultima_fecha_lectura` y `consumo_acumulado` aparecen en Dispositivos y servicios
+- [ ] Los sensores `ultimo_dia`, `ultima_fecha_lectura`, `consumo_acumulado` y `ultima_actualizacion` aparecen en Dispositivos y servicios
 - [ ] Sensor `Consumo acumulado` añadido como fuente de agua en el Panel de Energía
 
 ## Aviso
