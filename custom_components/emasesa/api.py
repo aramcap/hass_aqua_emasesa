@@ -163,6 +163,28 @@ def _looks_like_2fa_page(html: str) -> bool:
     return f'id="{FIELD_2FA_CODE}"' in html or f'name="{FORM_2FA_ID}"' in html
 
 
+def _extract_max_fecha(html: str) -> date | None:
+    """
+    Última fecha que EMASESA permite consultar, según el `maxDate` del
+    datepicker de la propia pantalla (p.ej. `maxDate:"07\\/09\\/2026"`).
+
+    EMASESA no publica la lectura de "hoy" ni la de "ayer" de forma
+    fiable (el retraso varía, no siempre es de un día como cabría
+    esperar); pedir un `hasta` posterior a este límite hace que el
+    formulario lo rechace (campo marcado `aria-invalid`) y la respuesta
+    AJAX no incluya el gráfico. Se lee este límite de la propia página
+    en vez de asumir un retraso fijo en días.
+    """
+    m = re.search(r'maxDate:"(\d{2})\\/(\d{2})\\/(\d{4})"', html)
+    if not m:
+        return None
+    dia, mes, anio = (int(g) for g in m.groups())
+    try:
+        return date(anio, mes, dia)
+    except ValueError:
+        return None
+
+
 def _parse_chart_response(xml_text: str) -> list[tuple[str, float]]:
     """Devuelve [(etiqueta, litros), ...] emparejados directamente por índice."""
     data_match = re.search(r"data:(\[\[[\d\s,.\-]*\]\])", xml_text)
@@ -388,7 +410,8 @@ class EmasesaApiClient:
         if not self._logged_in:
             await self.async_login()
 
-    async def _get_consumo_viewstate(self) -> str:
+    async def _get_consumo_page(self) -> str:
+        """GET de la pantalla de consumo, reautenticando si hace falta."""
         async with self._session.get(
             CONSUMO_URL, headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT
         ) as resp:
@@ -403,7 +426,7 @@ class EmasesaApiClient:
             ) as resp:
                 resp.raise_for_status()
                 html = await resp.text()
-        return _extract_viewstate(html)
+        return html
 
     async def async_get_daily_readings(self, desde: date, hasta: date) -> list[dict]:
         """
@@ -420,7 +443,20 @@ class EmasesaApiClient:
         coordinator lo convierte en un reauth de Home Assistant).
         """
         await self._ensure_login()
-        viewstate = await self._get_consumo_viewstate()
+        html = await self._get_consumo_page()
+        viewstate = _extract_viewstate(html)
+
+        max_fecha = _extract_max_fecha(html)
+        if max_fecha is not None and hasta > max_fecha:
+            _LOGGER.debug(
+                "El 'hasta' solicitado (%s) supera el máximo que EMASESA permite "
+                "consultar ahora mismo (%s); se ajusta a ese límite.",
+                hasta,
+                max_fecha,
+            )
+            hasta = max_fecha
+            if desde > hasta:
+                desde = hasta
 
         desde_str = desde.strftime(DATE_FMT_EMASESA)
         hasta_str = hasta.strftime(DATE_FMT_EMASESA)
