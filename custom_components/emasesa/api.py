@@ -179,6 +179,15 @@ def _parse_chart_response(xml_text: str) -> list[tuple[str, float]]:
                 "EMASESA ha vuelto a pedir verificación por SMS a mitad de sesión "
                 "(¿se ha revocado la confianza en este dispositivo?)."
             )
+        # No hay forma de saber desde aquí si es un rango genuinamente sin
+        # datos o si EMASESA ha cambiado el formato de la respuesta; se
+        # deja un fragmento en el log de depuración para poder
+        # diagnosticarlo sin tener que reproducir el problema en vivo.
+        _LOGGER.debug(
+            "Respuesta de consulta de consumo sin array 'data' reconocible "
+            "(primeros 4000 caracteres): %s",
+            xml_text[:4000],
+        )
         raise EmasesaApiError(
             "No se ha encontrado el array 'data' del gráfico en la respuesta "
             "(¿rango sin datos, o formato cambiado?)."
