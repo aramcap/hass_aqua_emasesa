@@ -51,6 +51,9 @@
       "ultimo_dia": {
         "name": "Latest day"
       },
+      "ultima_fecha_lectura": {
+        "name": "Latest reading date"
+      },
       "consumo_acumulado": {
         "name": "Cumulative consumption"
       }

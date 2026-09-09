@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
@@ -22,6 +24,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             EmasesaLatestDaySensor(coordinator, entry),
+            EmasesaLatestDateSensor(coordinator, entry),
             EmasesaCumulativeSensor(coordinator, entry),
         ]
     )
@@ -75,6 +78,24 @@ class EmasesaLatestDaySensor(EmasesaBaseEntity):
             "fecha": latest["date"].isoformat() if latest else None,
             "historico_reciente": {r["date"].isoformat(): r["litros"] for r in readings},
         }
+
+
+class EmasesaLatestDateSensor(EmasesaBaseEntity):
+    """Fecha del último día con lectura disponible (normalmente ayer)."""
+
+    _attr_device_class = SensorDeviceClass.DATE
+    _attr_icon = "mdi:calendar-check"
+    _attr_translation_key = "ultima_fecha_lectura"
+
+    def __init__(self, coordinator: EmasesaCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry)
+        self._attr_unique_id = f"{entry.entry_id}_ultima_fecha_lectura"
+
+    @property
+    def native_value(self) -> date | None:
+        data = self.coordinator.data or {}
+        latest = data.get("latest")
+        return latest["date"] if latest else None
 
 
 class EmasesaCumulativeSensor(EmasesaBaseEntity):
