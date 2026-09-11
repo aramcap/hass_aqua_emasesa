@@ -39,11 +39,33 @@
   "options": {
     "step": {
       "init": {
+        "menu_options": {
+          "ajustes": "Settings",
+          "carga_masiva": "Manual bulk load"
+        }
+      },
+      "ajustes": {
         "title": "EMASESA options",
         "data": {
           "scan_interval_minutes": "Minutes between updates"
         }
+      },
+      "carga_masiva": {
+        "title": "Manual bulk load",
+        "description": "Re-query EMASESA and rewrite the hourly statistic for the last N days. Use this to fill in the Energy dashboard history, or to fix a gap left by a previous load that failed partway through. This does not change any saved setting.",
+        "data": {
+          "dias": "Days back to query"
+        }
       }
+    },
+    "error": {
+      "reauth_required": "EMASESA has stopped trusting this device and needs to verify it again — reconnect the integration first (a reauthentication notification should appear), then retry the bulk load.",
+      "invalid_auth": "Invalid username or password.",
+      "cannot_connect": "Could not connect to EMASESA.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "carga_masiva_completada": "Bulk load finished."
     }
   },
   "entity": {

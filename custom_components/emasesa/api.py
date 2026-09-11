@@ -48,6 +48,23 @@ Resto del flujo (ya documentado y verificado antes)
     es JSON estricto) y se EMPAREJAN DIRECTAMENTE por índice —
     `ticks[i]` con `data[i]`, SIN invertir.
 
+------------------------------------------------------------------------
+Consumo por horas (para las estadísticas del Panel de Energía)
+------------------------------------------------------------------------
+La misma petición AJAX, cuando `desde` y `hasta` son EL MISMO día, hace
+que EMASESA devuelva el consumo desglosado por franjas horarias en vez
+de por días: mismos nombres de campo, mismo formato de respuesta, pero
+con `ticks` del tipo `"00-01"`, `"01-02"`, ... `"23-00"` (24 franjas)
+en vez de `"01-sep"`. Verificado en vivo inspeccionando
+`PrimeFaces.widgets[...].cfg`, confirmando que la suma de las 24
+franjas coincide con el total diario mostrado en pantalla.
+
+Importante: esto sigue siendo consumo YA registrado, con el mismo
+retraso de publicación que el resto de la telelectura — no hay forma de
+obtener un caudal instantáneo en tiempo real desde este portal, EMASESA
+no lo publica en ningún sitio. Lo que sí permite es importar el consumo
+con granularidad horaria en vez de diaria (ver `statistics.py`).
+
 Si EMASESA cambia el frontend, esto es lo primero que hay que revisar
 (ver el docstring de emasesa_consumo.py para más detalle sobre cómo
 recapturar la petición real desde las DevTools del navegador).
@@ -255,6 +272,26 @@ def _etiqueta_a_fecha(etiqueta: str, hasta_ref: date) -> date | None:
         return None
 
 
+_HORA_RANGO_RE = re.compile(r"^(\d{1,2})-(\d{1,2})$")
+
+
+def _etiqueta_a_hora(etiqueta: str) -> int | None:
+    """
+    Convierte una etiqueta de franja horaria tipo "13-14" o "23-00" en
+    la hora de INICIO de esa franja (13, 23, ...). Devuelve None si la
+    etiqueta no tiene ese formato (p.ej. si llega una vista diaria tipo
+    "01-sep" en vez de horaria — pasa si se pide un rango de más de un
+    día).
+    """
+    m = _HORA_RANGO_RE.match(etiqueta.strip())
+    if not m:
+        return None
+    inicio = int(m.group(1))
+    if not (0 <= inicio <= 23):
+        return None
+    return inicio
+
+
 class EmasesaApiClient:
     """
     Sesión autenticada contra la Oficina Online de EMASESA.
@@ -428,40 +465,9 @@ class EmasesaApiClient:
                 html = await resp.text()
         return html
 
-    async def async_get_daily_readings(self, desde: date, hasta: date) -> list[dict]:
-        """
-        Devuelve [{"date": date(...), "litros": float}, ...] ordenado
-        ascendente por fecha, para el rango [desde, hasta] (ambos
-        inclusive). `desde` debe ser distinto de `hasta` para obtener
-        granularidad diaria (si son iguales, EMASESA devuelve el
-        desglose horario de ese día, que esta función no interpreta
-        como fechas y descarta).
-
-        Puede lanzar `EmasesaTwoFactorRequired` si, a mitad de sesión,
-        EMASESA decide revocar la confianza en este `device_id` y volver
-        a pedir SMS (no se puede completar sin intervención humana; el
-        coordinator lo convierte en un reauth de Home Assistant).
-        """
-        await self._ensure_login()
-        html = await self._get_consumo_page()
-        viewstate = _extract_viewstate(html)
-
-        max_fecha = _extract_max_fecha(html)
-        if max_fecha is not None and hasta > max_fecha:
-            _LOGGER.debug(
-                "El 'hasta' solicitado (%s) supera el máximo que EMASESA permite "
-                "consultar ahora mismo (%s); se ajusta a ese límite.",
-                hasta,
-                max_fecha,
-            )
-            hasta = max_fecha
-            if desde > hasta:
-                desde = hasta
-
-        desde_str = desde.strftime(DATE_FMT_EMASESA)
-        hasta_str = hasta.strftime(DATE_FMT_EMASESA)
+    async def _post_consulta(self, desde_str: str, hasta_str: str, viewstate: str) -> str:
+        """POST AJAX compartido por la consulta diaria y la horaria."""
         _LOGGER.debug("Consultando consumo EMASESA %s -> %s", desde_str, hasta_str)
-
         payload = {
             "javax.faces.partial.ajax": "true",
             "javax.faces.source": FIELD_CONSULTAR_BTN,
@@ -484,8 +490,42 @@ class EmasesaApiClient:
             CONSUMO_URL, data=payload, headers=headers, timeout=REQUEST_TIMEOUT
         ) as resp:
             resp.raise_for_status()
-            text = await resp.text()
+            return await resp.text()
 
+    async def async_get_daily_readings(self, desde: date, hasta: date) -> list[dict]:
+        """
+        Devuelve [{"date": date(...), "litros": float}, ...] ordenado
+        ascendente por fecha, para el rango [desde, hasta] (ambos
+        inclusive). `desde` debe ser distinto de `hasta` para obtener
+        granularidad diaria (si son iguales, EMASESA devuelve el
+        desglose horario de ese día — usa `async_get_hourly_readings`
+        para eso; esta función descarta las etiquetas horarias si
+        llegan).
+
+        Puede lanzar `EmasesaTwoFactorRequired` si, a mitad de sesión,
+        EMASESA decide revocar la confianza en este `device_id` y volver
+        a pedir SMS (no se puede completar sin intervención humana; el
+        coordinator lo convierte en un reauth de Home Assistant).
+        """
+        await self._ensure_login()
+        html = await self._get_consumo_page()
+        viewstate = _extract_viewstate(html)
+
+        max_fecha = _extract_max_fecha(html)
+        if max_fecha is not None and hasta > max_fecha:
+            _LOGGER.debug(
+                "El 'hasta' solicitado (%s) supera el máximo que EMASESA permite "
+                "consultar ahora mismo (%s); se ajusta a ese límite.",
+                hasta,
+                max_fecha,
+            )
+            hasta = max_fecha
+            if desde > hasta:
+                desde = hasta
+
+        text = await self._post_consulta(
+            desde.strftime(DATE_FMT_EMASESA), hasta.strftime(DATE_FMT_EMASESA), viewstate
+        )
         pares = _parse_chart_response(text)
 
         resultado: list[dict] = []
@@ -501,4 +541,54 @@ class EmasesaApiClient:
             resultado.append({"date": fecha, "litros": float(litros)})
 
         resultado.sort(key=lambda r: r["date"])
+        return resultado
+
+    async def async_get_hourly_readings(self, dia: date) -> list[dict]:
+        """
+        Devuelve el consumo por horas de UN día concreto:
+        [{"hora_inicio": 0, "litros": float}, ...] para las franjas
+        horarias del día con dato disponible, ordenado ascendente. Se
+        usa para importar estadísticas externas con granularidad
+        horaria (ver `statistics.py`) — sigue siendo consumo YA
+        registrado, sujeto al mismo retraso de publicación que el resto
+        de la telelectura, y se recorta al `maxDate` vigente igual que
+        `async_get_daily_readings`.
+        """
+        await self._ensure_login()
+        html = await self._get_consumo_page()
+        viewstate = _extract_viewstate(html)
+
+        max_fecha = _extract_max_fecha(html)
+        if max_fecha is not None and dia > max_fecha:
+            # A diferencia de `async_get_daily_readings` (que recorta un
+            # RANGO), aquí `dia` es un único día concreto que el llamante
+            # espera que se corresponda con los datos devueltos: si
+            # EMASESA aún no lo permite consultar, se devuelve una lista
+            # vacía en vez de sustituirlo por otro día sin que el
+            # llamante se entere.
+            _LOGGER.debug(
+                "El día solicitado (%s) supera el máximo que EMASESA permite "
+                "consultar ahora mismo (%s); no hay datos horarios todavía.",
+                dia,
+                max_fecha,
+            )
+            return []
+
+        dia_str = dia.strftime(DATE_FMT_EMASESA)
+        text = await self._post_consulta(dia_str, dia_str, viewstate)
+        pares = _parse_chart_response(text)
+
+        resultado: list[dict] = []
+        for etiqueta, litros in pares:
+            hora = _etiqueta_a_hora(etiqueta)
+            if hora is None:
+                _LOGGER.debug(
+                    "Etiqueta '%s' no se ha podido interpretar como franja horaria; "
+                    "se descarta",
+                    etiqueta,
+                )
+                continue
+            resultado.append({"hora_inicio": hora, "litros": float(litros)})
+
+        resultado.sort(key=lambda r: r["hora_inicio"])
         return resultado

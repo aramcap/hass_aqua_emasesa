@@ -22,6 +22,8 @@ Integración personalizada (no oficial) para leer el consumo de agua de [EMASESA
   - [Verificación en dos pasos (SMS/email) al dar de alta la integración](#verificación-en-dos-pasos-smsemail-al-dar-de-alta-la-integración)
   - [Opciones](#opciones)
   - [Añadirlo al Panel de Energía](#añadirlo-al-panel-de-energía)
+    - [Estadística horaria (recomendado) vs. sensor de consumo acumulado](#estadística-horaria-recomendado-vs-sensor-de-consumo-acumulado)
+    - [Lectura periódica vs. carga masiva](#lectura-periódica-vs-carga-masiva)
   - [Cómo funciona / mantenimiento](#cómo-funciona--mantenimiento)
   - [Solución de problemas](#solución-de-problemas)
     - [Pide reautenticación constantemente](#pide-reautenticación-constantemente)
@@ -38,7 +40,8 @@ Por cada cuenta configurada, crea un dispositivo EMASESA con cuatro sensores:
 
 - ✅ **Último día** (`sensor.<nombre>_ultimo_dia`): litros del último día con lectura disponible (normalmente ayer; EMASESA suele tardar un día o dos en publicar la lectura). Incluye como atributo el histórico de los últimos días consultados (`historico_reciente`).
 - ✅ **Fecha de la última lectura** (`sensor.<nombre>_ultima_fecha_lectura`): fecha (tipo `date`) a la que corresponde ese último día con dato disponible, útil para detectar si EMASESA lleva tiempo sin publicar lecturas nuevas.
-- ✅ **Consumo acumulado** (`sensor.<nombre>_consumo_acumulado`): contador que solo crece (litros), pensado para añadirlo como fuente de **Agua** en el **Panel de Energía** de Home Assistant. Como EMASESA no ofrece una lectura de contador continua (solo consumos por día), la propia integración va sumando cada día nuevo una única vez y guarda ese total en disco para no perderlo si reinicias Home Assistant.
+- ✅ **Consumo acumulado** (`sensor.<nombre>_consumo_acumulado`): contador que solo crece (litros). Sigue disponible para automatizaciones, tarjetas de histórico y plantillas, pero **ya no es la fuente recomendada para el Panel de Energía** (ver siguiente punto). Como EMASESA no ofrece una lectura de contador continua (solo consumos por día), la propia integración va sumando cada día nuevo una única vez y guarda ese total en disco para no perderlo si reinicias Home Assistant.
+- ✅ **Estadística externa horaria** (`emasesa:<id>_consumo_horario`, no es un sensor - no aparece como entidad): el consumo de EMASESA importado con granularidad **horaria** directamente en el histórico de estadísticas del recorder, igual que hace la integración `opower` (incluida en Home Assistant) para compañías eléctricas/de gas con lecturas diarias retrasadas. Es la fuente recomendada para el **Panel de Energía** - ver [Añadirlo al Panel de Energía](#añadirlo-al-panel-de-energía).
 - ✅ **Última actualización** (`sensor.<nombre>_ultima_actualizacion`, sensor de diagnóstico): fecha y hora en que la integración consultó EMASESA por última vez sin error — no confundir con la fecha de la lectura en sí, que EMASESA publica con retraso.
 - ✅ Configuración por UI (Config Flow), incluida la verificación por SMS/email
 - ✅ Reautenticación guiada desde la propia integración si EMASESA deja de confiar en el dispositivo
@@ -46,7 +49,7 @@ Por cada cuenta configurada, crea un dispositivo EMASESA con cuatro sensores:
 
 ## Requisitos
 
-- Home Assistant 2024.1.0 o superior
+- Home Assistant 2024.1.0 o superior, con el componente `recorder` activo (lo está por defecto; la integración depende de él para escribir la [estadística externa horaria](#añadirlo-al-panel-de-energía))
 - Una cuenta activa en la Oficina Online de EMASESA (usuario DNI/NIE y contraseña) con telelectura disponible
 
 ## Instalación
@@ -84,6 +87,7 @@ config/
         ├── coordinator.py
         ├── manifest.json
         ├── sensor.py
+        ├── statistics.py
         ├── strings.json
         └── translations/
             ├── en.json
@@ -124,13 +128,36 @@ Esta integración se comporta como un dispositivo más ante EMASESA:
 
 ## Opciones
 
-Desde la propia integración (**Configurar**) puedes cambiar el intervalo de actualización (por defecto, 6 horas, con un rango permitido de 15 minutos a 24 horas). No merece la pena bajarlo mucho: EMASESA solo publica lecturas nuevas una vez al día, así que consultar con más frecuencia solo añade peticiones innecesarias.
+Al pulsar **Configurar** en la integración aparece un menú con dos acciones:
+
+- **Ajustes**: cambiar el intervalo de actualización (por defecto, 6 horas, con un rango permitido de 15 minutos a 24 horas). No merece la pena bajarlo mucho: EMASESA solo publica lecturas nuevas una vez al día, así que consultar con más frecuencia solo añade peticiones innecesarias.
+- **Carga masiva manual**: vuelve a consultar EMASESA y a reescribir la estadística horaria de los últimos N días (2 a 90, 30 por defecto). No cambia ningún ajuste guardado — es una acción puntual, pensada para rellenar histórico o arreglar un hueco de una carga anterior fallida (ver [Lectura periódica vs. carga masiva](#lectura-periódica-vs-carga-masiva)).
 
 ## Añadirlo al Panel de Energía
 
 1. Ve a **Ajustes** → **Paneles** → **Energía**
 2. Pulsa **Añadir fuente de agua**
-3. Selecciona el sensor `Consumo acumulado`
+3. Selecciona la estadística **"`<nombre>` consumo por hora"** (aparece en el selector junto a los sensores normales, pero no es un sensor: es la estadística externa horaria que describe la sección anterior)
+
+Es normal que, justo después de dar de alta la integración, el Panel de Energía tarde en mostrar datos: la carga masiva inicial trae de golpe hasta 30 días de histórico horario (ver [Lectura periódica vs. carga masiva](#lectura-periódica-vs-carga-masiva) más abajo), pero el panel solo dibuja estadísticas ya cerradas por hora/día, así que puede no verse nada hasta pasada la siguiente actualización.
+
+### Estadística horaria (recomendado) vs. sensor de consumo acumulado
+
+Por qué hay dos cosas en vez de una sola:
+
+- El sensor `consumo_acumulado` es un contador (`total_increasing`) normal. Las estadísticas horarias que Home Assistant genera automáticamente para un sensor así se basan en **cuándo cambia su estado** (lo que registra el recorder en tiempo real), no en ninguna fecha propia del dato. Si además se intentase "corregir" a posteriori las estadísticas de ese mismo sensor con el histórico horario de EMASESA, entrarían en conflicto con las que el recorder ya generó por su cuenta a partir de los cambios de estado reales, y el consumo se acabaría contando dos veces.
+- Por eso el consumo horario se importa como una **estadística externa** aparte (`emasesa:<id>_consumo_horario`), desacoplada de cualquier entidad y que solo escribe esta integración - el mismo patrón que usa la integración `opower` (incluida en Home Assistant) para compañías eléctricas/de gas con lecturas diarias y retraso de publicación. Al no competir con ningún sensor por esos mismos puntos, no hay riesgo de contar el consumo dos veces, y además tiene granularidad horaria en vez de diaria.
+
+El sensor `consumo_acumulado` no desaparece ni cambia de comportamiento: sigue siendo útil para automatizaciones, tarjetas de histórico o plantillas. Simplemente, para el Panel de Energía, la estadística horaria es la fuente recomendada.
+
+### Lectura periódica vs. carga masiva
+
+La integración distingue dos tipos de consulta a EMASESA:
+
+- **Lectura periódica** (cada `scan_interval_minutes`, 6 horas por defecto): pide un rango corto de 2 días y solo añade a la estadística horaria lo que haya después del último punto ya importado — en régimen normal, como mucho un día nuevo por actualización, ya que EMASESA solo publica una lectura nueva al día. Deliberadamente NO vuelve a pedir ni a tocar días ya importados, para no multiplicar peticiones a EMASESA en cada actualización.
+- **Carga masiva**: pide un rango más amplio (30 días por defecto) y **recalcula y sobrescribe** la estadística horaria de todo ese tramo desde cero, sin mirar lo que ya hubiera. Se ejecuta sola una única vez, la primera vez que la integración consigue datos (para no arrancar con el Panel de Energía vacío), y también se puede volver a lanzar **a mano** en cualquier momento desde **Configurar → Carga masiva manual**, indicando cuántos días hacia atrás (de 2 a 90). Es la forma de rellenar histórico que falte o de arreglar un hueco que haya dejado una carga anterior fallida a medias (un día que diera error en la carga automática se queda saltado para siempre si no se repite a mano).
+
+El sensor `consumo_acumulado` no se ve afectado por esta distinción: internamente deduplica por fecha (recuerda qué días ya ha contado), así que da igual el tamaño de la ventana consultada — nunca suma un día dos veces, tanto si viene de una lectura periódica como de una carga masiva.
 
 ## Cómo funciona / mantenimiento
 
@@ -139,7 +166,7 @@ Todo el detalle de las peticiones HTTP (login por formulario JSF, la verificaci�
 Puntos frágiles a vigilar si deja de funcionar:
 
 - Cambios en los `id`/`name` de los campos de los formularios de login, de la pantalla de verificación SMS/email, o de la consulta de fechas.
-- Cambios en el formato de la respuesta del gráfico (`PrimeFaces.cw("Chart", ...)`), que es como se extraen los litros por día.
+- Cambios en el formato de la respuesta del gráfico (`PrimeFaces.cw("Chart", ...)`), que es como se extraen los litros por día (o por hora, cuando `desde == hasta`: ver el desglose horario que usa la estadística externa en `api.py`/`statistics.py`).
 - El campo oculto `hiddenDisp` del login, que este proyecto sigue enviando vacío porque así llega en el HTML público del formulario (no forma parte del mecanismo de confianza: es `deviceId` el que importa, y ese sí se envía con un valor real generado por la integración).
 - Si EMASESA cambia el criterio para detectar la pantalla de verificación (actualmente se distingue por la presencia del formulario `formData`), la integración podría no reconocerla y fallar con un error de conexión en vez de pedir el código correctamente.
 
@@ -176,7 +203,7 @@ Después revisa los logs en **Ajustes → Sistema → Registros**.
 - [ ] Integración añadida desde la UI con tu usuario y contraseña
 - [ ] Código de verificación introducido si se ha solicitado
 - [ ] Los sensores `ultimo_dia`, `ultima_fecha_lectura`, `consumo_acumulado` y `ultima_actualizacion` aparecen en Dispositivos y servicios
-- [ ] Sensor `Consumo acumulado` añadido como fuente de agua en el Panel de Energía
+- [ ] Estadística `<nombre> consumo por hora` añadida como fuente de agua en el Panel de Energía (recomendado, en vez del sensor `Consumo acumulado`)
 
 ## Aviso
 

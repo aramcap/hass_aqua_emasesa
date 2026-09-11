@@ -39,11 +39,33 @@
   "options": {
     "step": {
       "init": {
+        "menu_options": {
+          "ajustes": "Ajustes",
+          "carga_masiva": "Carga masiva manual"
+        }
+      },
+      "ajustes": {
         "title": "Opciones de EMASESA",
         "data": {
           "scan_interval_minutes": "Minutos entre actualizaciones"
         }
+      },
+      "carga_masiva": {
+        "title": "Carga masiva manual",
+        "description": "Vuelve a consultar EMASESA y reescribe la estadística horaria de los últimos N días. Útil para rellenar el histórico del Panel de Energía, o para arreglar un hueco que haya dejado una carga anterior fallida a medias. No cambia ningún ajuste guardado.",
+        "data": {
+          "dias": "Días hacia atrás a consultar"
+        }
       }
+    },
+    "error": {
+      "reauth_required": "EMASESA ha dejado de confiar en este dispositivo y necesita verificarlo de nuevo — reconecta primero la integración (debería aparecer un aviso de reautenticación) y vuelve a intentar la carga masiva.",
+      "invalid_auth": "Usuario o contraseña incorrectos.",
+      "cannot_connect": "No se ha podido conectar con EMASESA.",
+      "unknown": "Error inesperado."
+    },
+    "abort": {
+      "carga_masiva_completada": "Carga masiva completada."
     }
   },
   "entity": {

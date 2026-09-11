@@ -40,6 +40,10 @@ from .api import (
     generate_device_id,
 )
 from .const import (
+    CARGA_MASIVA_DIAS_DEFECTO,
+    CARGA_MASIVA_MAX_DIAS,
+    CARGA_MASIVA_MIN_DIAS,
+    CONF_CARGA_MASIVA_DIAS,
     CONF_DEVICE_ID,
     CONF_NAME_DEFAULT,
     CONF_SCAN_INTERVAL_MINUTES,
@@ -219,7 +223,7 @@ class EmasesaConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
 
 class EmasesaOptionsFlow(config_entries.OptionsFlow):
-    """Permite ajustar la frecuencia de consulta."""
+    """Permite ajustar la frecuencia de consulta y lanzar una carga masiva manual."""
 
     # No guardamos `config_entry` a mano: desde que Home Assistant lo
     # deprecó, asignarlo en __init__ termina lanzando un error (500 al
@@ -227,6 +231,11 @@ class EmasesaOptionsFlow(config_entries.OptionsFlow):
     # resuelto a partir del flujo en curso.
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
+        return self.async_show_menu(step_id="init", menu_options=["ajustes", "carga_masiva"])
+
+    # -- ajustes (lo que antes vivía en "init") -----------------------------
+
+    async def async_step_ajustes(self, user_input: dict[str, Any] | None = None) -> config_entries.FlowResult:
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
@@ -241,4 +250,45 @@ class EmasesaOptionsFlow(config_entries.OptionsFlow):
                 )
             }
         )
-        return self.async_show_form(step_id="init", data_schema=schema)
+        return self.async_show_form(step_id="ajustes", data_schema=schema)
+
+    # -- carga masiva manual -------------------------------------------------
+
+    async def async_step_carga_masiva(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """
+        Vuelve a pedir a EMASESA (y a reescribir la estadística horaria
+        de) los últimos N días, con N ajustable — pensado para rellenar
+        el histórico si algo falló en una carga anterior. No cambia
+        ninguna opción persistida: es una acción puntual, no una
+        configuración, así que al terminar se cierra con `async_abort`
+        en vez de `async_create_entry`.
+        """
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            coordinator = self.hass.data[DOMAIN][self.config_entry.entry_id]["coordinator"]
+            try:
+                await coordinator.async_trigger_carga_masiva(user_input[CONF_CARGA_MASIVA_DIAS])
+            except EmasesaTwoFactorRequired:
+                errors["base"] = "reauth_required"
+            except EmasesaAuthError:
+                errors["base"] = "invalid_auth"
+            except EmasesaApiError:
+                errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Error inesperado en la carga masiva manual de EMASESA")
+                errors["base"] = "unknown"
+            else:
+                return self.async_abort(reason="carga_masiva_completada")
+
+        schema = vol.Schema(
+            {
+                vol.Optional(CONF_CARGA_MASIVA_DIAS, default=CARGA_MASIVA_DIAS_DEFECTO): vol.All(
+                    vol.Coerce(int),
+                    vol.Range(min=CARGA_MASIVA_MIN_DIAS, max=CARGA_MASIVA_MAX_DIAS),
+                )
+            }
+        )
+        return self.async_show_form(step_id="carga_masiva", data_schema=schema, errors=errors)
