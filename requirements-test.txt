@@ -1,0 +1,4 @@
+# Dependencias de los tests unitarios de parseo (no arrancan Home
+# Assistant: ver tests/conftest.py).
+pytest>=8.0
+aiohttp>=3.9

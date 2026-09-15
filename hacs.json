@@ -1,0 +1,7 @@
+{
+  "name": "EMASESA - Consumo de agua",
+  "render_readme": true,
+  "domains": ["sensor"],
+  "country": ["ES"],
+  "homeassistant": "2024.1.0"
+}

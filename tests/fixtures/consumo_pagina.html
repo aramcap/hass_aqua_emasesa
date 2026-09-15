@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="es"><head><title>Mi consumo - Oficina Online</title></head>
+<body>
+<form id="form-date" name="form-date" method="post" action="/oficina-online/web/consumos/miConsumo/">
+  <input type="hidden" name="form-date" value="form-date" />
+  <input id="form-date:button_input" name="form-date:button_input" type="text" value="01/09/2026" />
+  <input id="form-date:button2_input" name="form-date:button2_input" type="text" value="07/09/2026" />
+  <button id="form-date:j_idt169" name="form-date:j_idt169" type="submit">Consultar</button>
+  <input type="hidden" name="javax.faces.ViewState" id="j_id1:javax.faces.ViewState:0"
+         value="stateless-4242" autocomplete="off" />
+</form>
+<script type="text/javascript">
+  PrimeFaces.cw("DatePicker","widget_form_date_button",{id:"form-date:button",
+  showIcon:true,mask:"99/99/9999",minDate:"01\/01\/2020",maxDate:"07\/09\/2026",
+  yearRange:"2020:2026"});
+</script>
+</body></html>

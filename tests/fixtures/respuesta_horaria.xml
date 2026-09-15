@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<partial-response id="j_id1"><changes><update id="form-date:panelGrafico"><![CDATA[
+<div id="form-date:chart" class="ui-chart"></div>
+<script id="form-date:chart_s" type="text/javascript">
+$(function(){PrimeFaces.cw("Chart","widget_form_date_chart",{id:"form-date:chart",
+type:"bar",data:[[0, 0, 0, 0, 0, 0, 1.2, 8.4, 22.6, 14.1, 6.3, 5.0, 12.8, 9.7, 3.4, 2.1, 4.6, 11.9, 18.3, 25.7, 13.2, 7.8, 2.9, 0.8]],
+ticks:["00\-01","01\-02","02\-03","03\-04","04\-05","05\-06","06\-07","07\-08","08\-09","09\-10","10\-11","11\-12","12\-13","13\-14","14\-15","15\-16","16\-17","17\-18","18\-19","19\-20","20\-21","21\-22","22\-23","23\-00"],
+seriesColors:["0d6efd"],datasetFill:true,shadow:false});});
+</script>
+]]></update><update id="javax.faces.ViewState"><![CDATA[stateless-4242]]></update></changes></partial-response>

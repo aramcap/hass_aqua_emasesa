@@ -1,0 +1,5 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<partial-response id="j_id1"><changes><update id="form-date:panelGrafico"><![CDATA[
+<div id="form-date:chart" class="ui-chart"></div>
+<div class="ui-messages ui-widget">No hay datos de consumo para el rango seleccionado.</div>
+]]></update><update id="javax.faces.ViewState"><![CDATA[stateless-4242]]></update></changes></partial-response>
