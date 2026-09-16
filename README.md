@@ -37,13 +37,14 @@ Integración personalizada (no oficial) para leer el consumo de agua de [EMASESA
 
 ## Qué aporta
 
-Por cada cuenta configurada, crea un dispositivo EMASESA con cuatro sensores:
+Por cada cuenta configurada, crea un dispositivo EMASESA con cuatro sensores y un botón de diagnóstico:
 
 - ✅ **Último día** (`sensor.<nombre>_ultimo_dia`): litros del último día con lectura disponible (normalmente ayer; EMASESA suele tardar un día o dos en publicar la lectura). Incluye como atributo el histórico de los últimos días consultados (`historico_reciente`). Se declara como `total` con `last_reset` en el inicio de ese día, que es lo que Home Assistant espera de un consumo de agua acumulado durante un periodo (la clase de estado `measurement` no es válida junto a la clase de dispositivo `water`).
 - ✅ **Fecha de la última lectura** (`sensor.<nombre>_ultima_fecha_lectura`): fecha (tipo `date`) a la que corresponde ese último día con dato disponible, útil para detectar si EMASESA lleva tiempo sin publicar lecturas nuevas. Si una actualización no trae ningún día nuevo, este sensor y el de **Último día** conservan su último valor válido en vez de quedarse en `desconocido`: para comprobar que la integración sigue consultando bien está el sensor de diagnóstico **Última actualización**.
 - ✅ **Consumo acumulado** (`sensor.<nombre>_consumo_acumulado`): contador que solo crece (litros). Sigue disponible para automatizaciones, tarjetas de histórico y plantillas, pero **ya no es la fuente recomendada para el Panel de Energía** (ver siguiente punto). Como EMASESA no ofrece una lectura de contador continua (solo consumos por día), la propia integración va sumando cada día nuevo una única vez y guarda ese total en disco para no perderlo si reinicias Home Assistant.
 - ✅ **Estadística externa horaria** (`emasesa:<id>_consumo_horario`, no es un sensor - no aparece como entidad): el consumo de EMASESA importado con granularidad **horaria** directamente en el histórico de estadísticas del recorder, igual que hace la integración `opower` (incluida en Home Assistant) para compañías eléctricas/de gas con lecturas diarias retrasadas. Es la fuente recomendada para el **Panel de Energía** - ver [Añadirlo al Panel de Energía](#añadirlo-al-panel-de-energía).
 - ✅ **Última actualización** (`sensor.<nombre>_ultima_actualizacion`, sensor de diagnóstico): fecha y hora en que la integración consultó EMASESA por última vez sin error — no confundir con la fecha de la lectura en sí, que EMASESA publica con retraso.
+- ✅ **Forzar lectura** (`button.<nombre>_forzar_lectura`, botón de diagnóstico): lanza en el momento la misma lectura que dispara el temporizador cada `scan_interval_minutes`, sin esperar al siguiente ciclo. Útil para comprobar si EMASESA ya ha publicado un día nuevo, o para reproducir una actualización mientras se mira el registro. Si la lectura falla, el botón lo avisa en la interfaz en vez de quedarse callado. Para rellenar histórico o huecos no sirve: eso es la [carga masiva manual](#opciones).
 - ✅ Configuración por UI (Config Flow), incluida la verificación por SMS/email
 - ✅ Reautenticación guiada desde la propia integración si EMASESA deja de confiar en el dispositivo
 - ✅ Intervalo de actualización configurable
@@ -207,7 +208,7 @@ logger:
     custom_components.emasesa: debug
 ```
 
-Después revisa los logs en **Ajustes → Sistema → Registros**.
+Después pulsa el botón **Forzar lectura** del dispositivo (no hace falta esperar al siguiente ciclo de 6 horas) y revisa los logs en **Ajustes → Sistema → Registros**.
 
 ### Lista de comprobación de instalación
 

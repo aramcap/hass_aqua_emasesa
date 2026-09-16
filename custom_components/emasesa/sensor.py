@@ -8,13 +8,13 @@ from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, Sen
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfVolume
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceEntryType
 from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, ZONA_EMASESA
 from .coordinator import EmasesaCoordinator
+from .entity import emasesa_device_info
 
 
 async def async_setup_entry(
@@ -42,13 +42,7 @@ class EmasesaBaseEntity(CoordinatorEntity[EmasesaCoordinator], SensorEntity):
 
     @property
     def device_info(self) -> DeviceInfo:
-        return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
-            name=self._entry.title,
-            manufacturer="EMASESA",
-            model="Telelectura (Oficina Online, no oficial)",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        return emasesa_device_info(self._entry)
 
 
 class EmasesaLatestDaySensor(EmasesaBaseEntity):

@@ -82,6 +82,11 @@
       "ultima_actualizacion": {
         "name": "Last update"
       }
+    },
+    "button": {
+      "forzar_lectura": {
+        "name": "Force reading"
+      }
     }
   }
 }
