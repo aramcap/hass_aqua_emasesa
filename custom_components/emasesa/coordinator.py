@@ -97,6 +97,26 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
         return changed
 
     def _build_data(self, readings: list[dict]) -> dict:
+        """
+        Monta el estado que consumen los sensores, CONSERVANDO la última
+        lectura válida si esta actualización no ha traído ninguna.
+
+        Una actualización puede terminar sin lecturas sin que haya
+        fallado nada: EMASESA todavía no ha publicado un día nuevo, o el
+        rango consultado se ha quedado sin etiquetas interpretables. Si
+        en ese caso se devolviera `latest: None`, los sensores de último
+        día y de última fecha de lectura pasarían a "desconocido" en
+        cada actualización, perdiendo un dato que sigue siendo cierto
+        (el consumo de ese día no deja de existir porque EMASESA no
+        publique uno nuevo).
+
+        Que la fecha se quede quieta es además la señal que documenta
+        `ultima_fecha_lectura`: permite ver cuánto lleva EMASESA sin
+        publicar. Para saber si la integración sigue consultando bien
+        está el sensor de diagnóstico `ultima_actualizacion`.
+        """
+        if not readings:
+            readings = (self.data or {}).get("readings") or []
         return {
             "readings": readings,
             "latest": readings[-1] if readings else None,

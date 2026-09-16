@@ -76,7 +76,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import date
+from datetime import date, timedelta
 
 import aiohttp
 
@@ -200,6 +200,34 @@ def _extract_max_fecha(html: str) -> date | None:
         return date(anio, mes, dia)
     except ValueError:
         return None
+
+
+def _ajusta_rango_diario(
+    desde: date, hasta: date, max_fecha: date | None
+) -> tuple[date, date]:
+    """
+    Ajusta el rango de una consulta DIARIA a lo que EMASESA acepta.
+
+    Hay dos condiciones que deben cumplirse a la vez:
+
+    - `hasta` no puede pasar del `maxDate` del datepicker. Si se pide
+      más, el formulario lo rechaza y la respuesta no trae gráfico.
+    - `desde` y `hasta` no pueden ser el MISMO día: en ese caso EMASESA
+      cambia a la vista horaria, y esta consulta descarta todas esas
+      etiquetas, así que se quedaría sin ninguna lectura diaria.
+
+    Lo segundo es consecuencia de lo primero en la actualización
+    periódica: su ventana son dos días contando hoy, pero EMASESA
+    publica con uno o dos días de retraso, así que al recortar `hasta`
+    al `maxDate` el rango se quedaba en un único día y la consulta no
+    devolvía nada. Por eso, después de recortar, `desde` se amplía
+    hacia atrás — nunca hacia delante.
+    """
+    if max_fecha is not None and hasta > max_fecha:
+        hasta = max_fecha
+    if desde >= hasta:
+        desde = hasta - timedelta(days=1)
+    return desde, hasta
 
 
 def _parse_chart_response(xml_text: str) -> list[tuple[str, float]]:
@@ -512,16 +540,19 @@ class EmasesaApiClient:
         viewstate = _extract_viewstate(html)
 
         max_fecha = _extract_max_fecha(html)
-        if max_fecha is not None and hasta > max_fecha:
+        desde_ajustado, hasta_ajustado = _ajusta_rango_diario(desde, hasta, max_fecha)
+        if (desde_ajustado, hasta_ajustado) != (desde, hasta):
             _LOGGER.debug(
-                "El 'hasta' solicitado (%s) supera el máximo que EMASESA permite "
-                "consultar ahora mismo (%s); se ajusta a ese límite.",
+                "Rango %s..%s ajustado a %s..%s (máximo que EMASESA permite "
+                "consultar ahora mismo: %s; la vista diaria necesita al menos "
+                "dos días distintos).",
+                desde,
                 hasta,
+                desde_ajustado,
+                hasta_ajustado,
                 max_fecha,
             )
-            hasta = max_fecha
-            if desde > hasta:
-                desde = hasta
+        desde, hasta = desde_ajustado, hasta_ajustado
 
         text = await self._post_consulta(
             desde.strftime(DATE_FMT_EMASESA), hasta.strftime(DATE_FMT_EMASESA), viewstate

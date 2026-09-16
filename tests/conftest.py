@@ -15,8 +15,11 @@ Para conseguirlo hacen falta dos apaños, los dos acotados a este fichero:
    de dentro (`from .api import ...`) siguen resolviendo bien. Los tests
    importan de ahí: `from emasesa.api import ...`.
 
-2. `statistics.py` importa Home Assistant en su cabecera. Se registran
-   unos módulos `homeassistant.*` mínimos para que el import no falle.
+2. `statistics.py` y `coordinator.py` importan Home Assistant en su
+   cabecera. Se registran unos módulos `homeassistant.*` mínimos para
+   que el import no falle; lo que se prueba de esos módulos sigue
+   siendo lógica propia sobre diccionarios y fechas, no comportamiento
+   de Home Assistant.
    Los stubs imitan una versión ACTUAL de Home Assistant (con
    `StatisticMeanType` y con `unit_class` en `StatisticMetaData`), que
    es contra lo que `test_statistics_metadata.py` comprueba qué campos
@@ -92,6 +95,21 @@ def _stub_homeassistant() -> None:
     class _VolumeConverter:
         UNIT_CLASS = "volume"
 
+    class _Generico:
+        """Base sustituta que admite `Clase[tipo]` al heredar de ella."""
+
+        def __class_getitem__(cls, item: object) -> type:
+            return cls
+
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            pass
+
+    class _UpdateFailed(Exception):
+        pass
+
+    class _ConfigEntryAuthFailed(Exception):
+        pass
+
     class _DtUtil:
         """Lo único que se usa de `homeassistant.util.dt` en el módulo."""
 
@@ -100,6 +118,10 @@ def _stub_homeassistant() -> None:
         @staticmethod
         def utc_from_timestamp(timestamp: float) -> datetime:
             return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+
+        @staticmethod
+        def utcnow() -> datetime:
+            return datetime.now(tz=timezone.utc)
 
     # Los intermedios necesitan `__path__` para que `from x.y import z`
     # los trate como paquetes; se les da una ruta que no existe, porque
@@ -123,6 +145,16 @@ def _stub_homeassistant() -> None:
         "homeassistant.components.recorder.statistics",
         async_add_external_statistics=_Marcador,
         get_last_statistics=_Marcador,
+    )
+    # Lo que necesita `coordinator.py` por encima de lo anterior.
+    _paquete("homeassistant.config_entries", ConfigEntry=_Marcador)
+    _paquete("homeassistant.exceptions", ConfigEntryAuthFailed=_ConfigEntryAuthFailed)
+    _paquete("homeassistant.helpers", inexistente)
+    _paquete("homeassistant.helpers.storage", Store=_Marcador)
+    _paquete(
+        "homeassistant.helpers.update_coordinator",
+        DataUpdateCoordinator=_Generico,
+        UpdateFailed=_UpdateFailed,
     )
 
 
