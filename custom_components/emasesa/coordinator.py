@@ -262,6 +262,14 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
 
         hasta = date.today()
         desde = hasta - timedelta(days=dias - 1)
+        _LOGGER.debug(
+            "Carga masiva manual: se piden %d día(s) hacia atrás (%s..%s). Los días "
+            "que EMASESA aún no haya publicado no se pueden traer, así que la "
+            "ventana real puede ser más corta.",
+            dias,
+            desde,
+            hasta,
+        )
 
         try:
             readings = await self.api.async_get_daily_readings(desde, hasta)
@@ -278,7 +286,7 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
             await self._async_save_storage()
 
         try:
-            await self._hourly_stats.async_reimport_window(
+            escritas = await self._hourly_stats.async_reimport_window(
                 readings, self._baseline_antes_de(readings)
             )
         except EmasesaTwoFactorRequired as err:
@@ -287,5 +295,15 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
 
         self.last_fetch_success = dt_util.utcnow()
         data = self._build_data(readings)
+        _LOGGER.debug(
+            "Carga masiva manual terminada: %d día(s) traído(s) de los %d pedidos, "
+            "%d franja(s) reescrita(s); contador acumulado %.1f L sobre %d día(s) "
+            "contado(s)",
+            len(readings),
+            dias,
+            escritas,
+            self._cumulative_total,
+            len(self._counted_dates),
+        )
         self.async_set_updated_data(data)
         return data

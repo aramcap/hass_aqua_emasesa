@@ -207,6 +207,53 @@ class EmasesaHourlyStatisticsImporter:
         )
         return suma, inicio
 
+    async def _async_log_estado_serie(self) -> None:
+        """
+        Vuelca en el registro los últimos puntos REALMENTE guardados.
+
+        Es la única forma de distinguir "la integración no lo envió" de
+        "lo envió y no está": todo lo demás que se registra describe lo
+        que esta integración decide, no lo que el recorder acaba
+        guardando.
+
+        Se lee ANTES de escribir, a propósito:
+        `async_add_external_statistics` encola la escritura en el
+        recorder en vez de hacerla en el momento, así que releer justo
+        después podría devolver todavía el estado anterior. Leyendo al
+        principio, lo que sale es lo que quedó confirmado de las veces
+        anteriores.
+        """
+        if not _LOGGER.isEnabledFor(logging.DEBUG):
+            return
+        try:
+            ultimas = await get_instance(self.hass).async_add_executor_job(
+                get_last_statistics, self.hass, 5, self.statistic_id, False, {"sum", "state"}
+            )
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug(
+                "No se ha podido releer el estado de %s",
+                self.statistic_id,
+                exc_info=True,
+            )
+            return
+
+        filas = ultimas.get(self.statistic_id) or []
+        if not filas:
+            _LOGGER.debug(
+                "Estado guardado de %s: ningún punto", self.statistic_id
+            )
+            return
+        _LOGGER.debug(
+            "Estado guardado de %s (últimos %d puntos confirmados): %s",
+            self.statistic_id,
+            len(filas),
+            "; ".join(
+                f"{_inicio_a_datetime(f['start']).astimezone(ZONA_EMASESA):%d/%m %H:%M}"
+                f" consumo={f.get('state')} suma={f.get('sum')}"
+                for f in sorted(filas, key=lambda f: f["start"])
+            ),
+        )
+
     async def async_import_hourly_statistics(self, dias: list[date]) -> int:
         """
         Importa el desglose horario de los días de `dias` que aún no
@@ -224,6 +271,7 @@ class EmasesaHourlyStatisticsImporter:
             )
             return 0
 
+        await self._async_log_estado_serie()
         acumulado, ultimo_punto = await self._async_last_checkpoint()
         ultima_fecha = ultimo_punto.astimezone(ZONA_EMASESA).date() if ultimo_punto else None
 
@@ -327,6 +375,16 @@ class EmasesaHourlyStatisticsImporter:
         Devuelve cuántas franjas horarias se han escrito. Puede lanzar
         `EmasesaTwoFactorRequired` igual que el resto de la integración.
         """
+        await self._async_log_estado_serie()
+        _LOGGER.debug(
+            "Carga masiva de %d día(s) disponibles (%s), partiendo de un acumulado "
+            "previo de %.1f L tomado del contador de la integración",
+            len(readings),
+            ", ".join(r["date"].strftime("%d/%m") for r in sorted(readings, key=lambda x: x["date"]))
+            or "ninguno",
+            baseline,
+        )
+
         acumulado = baseline
         nuevas: list[StatisticData] = []
         dias_fallidos = 0

@@ -370,3 +370,37 @@ def test_el_registro_de_la_carga_masiva_dice_el_tramo_y_el_baseline(
     assert "Carga masiva" in caplog.text
     assert "510.0 -> 530.0 L" in caplog.text
     assert "500.0 L" in caplog.text
+
+
+def test_el_registro_vuelca_lo_que_hay_realmente_guardado(
+    importador, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Distingue "no se envió" de "se envió y no está": el resto del
+    registro describe lo que decide la integración, no lo que el
+    recorder acaba guardando.
+    """
+    ctx = importador(
+        filas=[
+            {"start": 1789041600.0, "state": 6.0, "sum": 5123.0},
+            {"start": 1789045200.0, "state": 7.0, "sum": 5130.0},
+        ],
+        franjas=_franjas({0: 1.0}),
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(ctx.imp._async_log_estado_serie())
+
+    assert "Estado guardado" in caplog.text
+    assert "suma=5123.0" in caplog.text and "suma=5130.0" in caplog.text
+
+
+def test_el_registro_dice_cuando_la_serie_esta_vacia(
+    importador, caplog: pytest.LogCaptureFixture
+) -> None:
+    ctx = importador(filas=None)
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(ctx.imp._async_log_estado_serie())
+
+    assert "ningún punto" in caplog.text
