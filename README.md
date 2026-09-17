@@ -210,6 +210,19 @@ logger:
 
 Después pulsa el botón **Forzar lectura** del dispositivo (no hace falta esperar al siguiente ciclo de 6 horas) y revisa los logs en **Ajustes → Sistema → Registros**.
 
+Con la depuración activada, una actualización completa deja constancia de todo lo que decide, y suele bastar para saber qué pasa sin mirar nada más:
+
+- **Hasta dónde ha publicado EMASESA** y cuántos días de retraso lleva respecto a hoy. Si el último día publicado no avanza, no es un fallo de la integración: no hay dato que traer.
+- **El rango consultado**, y si se ha ajustado (la vista diaria necesita dos días distintos y no puede pasar del máximo publicado).
+- **Las lecturas diarias obtenidas**, día a día con sus litros.
+- **Cuál es el último punto ya importado** en la estadística horaria, con su fecha y su suma acumulada.
+- **Qué días se piden y cuáles se omiten** por estar ya cubiertos por ese punto.
+- **Por cada día, cuántas franjas devuelve EMASESA, cuántas son nuevas y cuántas ya estaban.**
+- **Qué se ha escrito**: cuántos puntos, qué tramo horario cubren y entre qué sumas se mueven. El Panel de Energía dibuja el *incremento* de esa suma, así que si no crece, no pinta nada aunque las filas existan.
+- **Un resumen final** con el contador acumulado y los días contados, al lado de las franjas escritas. Son dos cosas distintas y pueden divergir: el contador no tiene huecos, la estadística sí puede tenerlos si alguna importación falló.
+
+Ten en cuenta que la lectura periódica **solo añade lo posterior al último punto importado**: nunca reescribe hacia atrás. Para rellenar días antiguos o arreglar un tramo, la herramienta es la [carga masiva manual](#opciones).
+
 ### Lista de comprobación de instalación
 
 - [ ] Home Assistant 2024.1.0 o superior

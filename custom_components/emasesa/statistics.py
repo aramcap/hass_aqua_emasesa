@@ -129,6 +129,25 @@ def _inicio_a_datetime(start: float | datetime) -> datetime:
     return dt_util.utc_from_timestamp(start)
 
 
+def _resumen_puntos(puntos: list[StatisticData]) -> str:
+    """
+    Describe en una línea lo que se va a escribir en la estadística.
+
+    Lo importante para diagnosticar no es cuántos puntos hay, sino qué
+    tramo cubren y entre qué sumas se mueven: el Panel de Energía dibuja
+    el INCREMENTO del `sum` entre horas, así que una suma que no crece
+    sale como cero consumo aunque las filas estén escritas.
+    """
+    if not puntos:
+        return "ningún punto"
+    primero, ultimo = puntos[0], puntos[-1]
+    return (
+        f"{len(puntos)} punto(s) de {primero['start'].astimezone(ZONA_EMASESA):%d/%m %H:%M}"
+        f" a {ultimo['start'].astimezone(ZONA_EMASESA):%d/%m %H:%M}"
+        f", suma {primero['sum']:.1f} -> {ultimo['sum']:.1f} L"
+    )
+
+
 class EmasesaHourlyStatisticsImporter:
     """
     Importa el desglose horario de EMASESA como estadística externa del
@@ -170,9 +189,23 @@ class EmasesaHourlyStatisticsImporter:
         )
         rows = last.get(self.statistic_id)
         if not rows:
+            _LOGGER.debug(
+                "La estadística %s no tiene ningún punto todavía: se importará "
+                "desde cero",
+                self.statistic_id,
+            )
             return 0.0, None
         row = rows[0]
-        return float(row.get("sum") or 0.0), _inicio_a_datetime(row["start"])
+        suma = float(row.get("sum") or 0.0)
+        inicio = _inicio_a_datetime(row["start"])
+        _LOGGER.debug(
+            "Último punto ya importado en %s: %s (hora de Sevilla), suma acumulada "
+            "%.1f L. Solo se añadirá lo posterior a esa hora.",
+            self.statistic_id,
+            inicio.astimezone(ZONA_EMASESA).strftime("%d/%m/%Y %H:%M"),
+            suma,
+        )
+        return suma, inicio
 
     async def async_import_hourly_statistics(self, dias: list[date]) -> int:
         """
@@ -185,6 +218,10 @@ class EmasesaHourlyStatisticsImporter:
         consulta diaria).
         """
         if not dias:
+            _LOGGER.debug(
+                "La consulta diaria no ha devuelto ningún día, así que no hay "
+                "desglose horario que importar"
+            )
             return 0
 
         acumulado, ultimo_punto = await self._async_last_checkpoint()
@@ -195,6 +232,15 @@ class EmasesaHourlyStatisticsImporter:
         # que ya estaba); los días anteriores ya están cubiertos.
         dias_a_pedir = sorted(
             {d for d in dias if ultima_fecha is None or d >= ultima_fecha}
+        )
+        omitidos = sorted(set(dias) - set(dias_a_pedir))
+        _LOGGER.debug(
+            "Días de la ventana: %s. Se pide el desglose horario de %s%s",
+            ", ".join(d.strftime("%d/%m") for d in sorted(set(dias))) or "ninguno",
+            ", ".join(d.strftime("%d/%m") for d in dias_a_pedir) or "ninguno",
+            f"; ya cubiertos por el último punto: {', '.join(d.strftime('%d/%m') for d in omitidos)}"
+            if omitidos
+            else "",
         )
 
         nuevas: list[StatisticData] = []
@@ -209,6 +255,7 @@ class EmasesaHourlyStatisticsImporter:
                 )
                 continue
 
+            nuevas_del_dia = 0
             for franja in franjas:
                 inicio = datetime(
                     dia.year, dia.month, dia.day, franja["hora_inicio"], tzinfo=ZONA_EMASESA
@@ -216,7 +263,17 @@ class EmasesaHourlyStatisticsImporter:
                 if ultimo_punto is not None and inicio <= ultimo_punto:
                     continue
                 acumulado += franja["litros"]
+                nuevas_del_dia += 1
                 nuevas.append(StatisticData(start=inicio, state=franja["litros"], sum=acumulado))
+            _LOGGER.debug(
+                "%s: EMASESA devuelve %d franja(s) (%.1f L en total); %d nueva(s), "
+                "%d ya cubierta(s) por el último punto importado",
+                dia.strftime("%d/%m/%Y"),
+                len(franjas),
+                sum(f["litros"] for f in franjas),
+                nuevas_del_dia,
+                len(franjas) - nuevas_del_dia,
+            )
 
         # Se llama SIEMPRE, aunque no haya franjas nuevas: además de
         # escribir los puntos, `async_add_external_statistics` reescribe
@@ -230,13 +287,14 @@ class EmasesaHourlyStatisticsImporter:
         async_add_external_statistics(self.hass, self._metadata, nuevas)
         if nuevas:
             _LOGGER.debug(
-                "Importadas %d franjas horarias nuevas en la estadística externa %s",
-                len(nuevas),
-                self.statistic_id,
+                "Importado en %s: %s", self.statistic_id, _resumen_puntos(nuevas)
             )
         else:
             _LOGGER.debug(
-                "Sin franjas nuevas que importar; metadatos de %s refrescados",
+                "Sin franjas nuevas que importar en %s (EMASESA no ha publicado nada "
+                "posterior al último punto); metadatos refrescados. Para rellenar "
+                "días anteriores hace falta la carga masiva: esta importación solo "
+                "añade lo posterior al último punto, nunca reescribe hacia atrás.",
                 self.statistic_id,
             )
         return len(nuevas)
@@ -297,11 +355,12 @@ class EmasesaHourlyStatisticsImporter:
         # haya devuelto ninguna franja.
         async_add_external_statistics(self.hass, self._metadata, nuevas)
         _LOGGER.debug(
-            "Carga masiva: reescritas %d franjas horarias (%d día(s) pedido(s), "
-            "%d fallido(s)) en la estadística externa %s",
-            len(nuevas),
+            "Carga masiva sobre %s: %d día(s) pedido(s), %d fallido(s); reescrito %s "
+            "(partiendo de un acumulado previo de %.1f L)",
+            self.statistic_id,
             len(readings),
             dias_fallidos,
-            self.statistic_id,
+            _resumen_puntos(nuevas),
+            baseline,
         )
         return len(nuevas)

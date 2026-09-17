@@ -540,6 +540,18 @@ class EmasesaApiClient:
         viewstate = _extract_viewstate(html)
 
         max_fecha = _extract_max_fecha(html)
+        if max_fecha is not None:
+            _LOGGER.debug(
+                "EMASESA tiene publicado hasta el %s (%d día(s) de retraso respecto "
+                "a hoy). No hay forma de obtener nada posterior a esa fecha.",
+                max_fecha.strftime("%d/%m/%Y"),
+                (date.today() - max_fecha).days,
+            )
+        else:
+            _LOGGER.debug(
+                "No se ha reconocido el 'maxDate' de la pantalla; se consulta el "
+                "rango pedido sin recortarlo"
+            )
         desde_ajustado, hasta_ajustado = _ajusta_rango_diario(desde, hasta, max_fecha)
         if (desde_ajustado, hasta_ajustado) != (desde, hasta):
             _LOGGER.debug(
@@ -572,6 +584,21 @@ class EmasesaApiClient:
             resultado.append({"date": fecha, "litros": float(litros)})
 
         resultado.sort(key=lambda r: r["date"])
+        if resultado:
+            _LOGGER.debug(
+                "Lecturas diarias obtenidas: %s",
+                ", ".join(
+                    f"{r['date'].strftime('%d/%m')}={r['litros']:.0f} L" for r in resultado
+                ),
+            )
+        else:
+            _LOGGER.warning(
+                "La consulta de consumo %s -> %s no ha devuelto ninguna lectura "
+                "diaria interpretable (se han descartado %d etiqueta(s) del gráfico)",
+                desde,
+                hasta,
+                len(pares),
+            )
         return resultado
 
     async def async_get_hourly_readings(self, dia: date) -> list[dict]:
@@ -622,4 +649,10 @@ class EmasesaApiClient:
             resultado.append({"hora_inicio": hora, "litros": float(litros)})
 
         resultado.sort(key=lambda r: r["hora_inicio"])
+        _LOGGER.debug(
+            "Desglose horario de %s: %d franja(s), %.1f L en total",
+            dia.strftime("%d/%m/%Y"),
+            len(resultado),
+            sum(r["litros"] for r in resultado),
+        )
         return resultado

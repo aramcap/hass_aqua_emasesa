@@ -168,6 +168,14 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
         except EmasesaApiError as err:
             raise UpdateFailed(f"Error consultando EMASESA: {err}") from err
 
+        if not readings:
+            _LOGGER.warning(
+                "EMASESA no ha devuelto ninguna lectura para %s..%s; los sensores "
+                "conservan su último valor válido",
+                desde,
+                hasta,
+            )
+
         if self._apply_readings(readings):
             await self._async_save_storage()
 
@@ -182,13 +190,14 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
         # la actualización (los sensores son más importantes que las
         # estadísticas): solo se propaga si EMASESA vuelve a exigir el
         # SMS, igual que en la consulta diaria.
+        franjas_importadas: int | None = None
         try:
             if es_primera_carga:
-                await self._hourly_stats.async_reimport_window(
+                franjas_importadas = await self._hourly_stats.async_reimport_window(
                     readings, self._baseline_antes_de(readings)
                 )
             else:
-                await self._hourly_stats.async_import_hourly_statistics(
+                franjas_importadas = await self._hourly_stats.async_import_hourly_statistics(
                     [r["date"] for r in readings]
                 )
         except EmasesaTwoFactorRequired as err:
@@ -205,8 +214,32 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
             )
 
         self.last_fetch_success = dt_util.utcnow()
+        datos = self._build_data(readings)
 
-        return self._build_data(readings)
+        # Resumen de la actualización entera, para poder diagnosticarla de
+        # un vistazo. El contador y la estadística horaria son dos cosas
+        # distintas y pueden divergir (el contador no tiene huecos; la
+        # estadística sí, si alguna importación falló), así que se
+        # registran juntos a propósito.
+        ultimo = datos.get("latest")
+        _LOGGER.debug(
+            "Actualización terminada (%s): ventana %s..%s, %d lectura(s); último día "
+            "con dato %s; contador acumulado %.1f L sobre %d día(s) contado(s); "
+            "estadística horaria: %s",
+            "carga masiva inicial" if es_primera_carga else "lectura periódica",
+            desde,
+            hasta,
+            len(readings),
+            f"{ultimo['date'].strftime('%d/%m/%Y')} = {ultimo['litros']:.0f} L"
+            if ultimo
+            else "ninguno",
+            self._cumulative_total,
+            len(self._counted_dates),
+            "no se ha podido importar"
+            if franjas_importadas is None
+            else f"{franjas_importadas} franja(s) escrita(s)",
+        )
+        return datos
 
     async def async_trigger_carga_masiva(self, dias: int) -> dict:
         """

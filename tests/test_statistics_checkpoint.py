@@ -17,6 +17,7 @@ así vuelva a delatarse.
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
@@ -278,3 +279,94 @@ def test_la_carga_masiva_refresca_los_metadatos_aunque_no_traiga_nada(
     assert escritas == 0
     assert len(ctx.llamadas) == 1
     assert ctx.llamadas[0][1] == []
+
+
+# ---------------------------------------------------------------------
+# Registro de depuración
+#
+# El registro es la única ventana a lo que pasa en una instalación real:
+# si se degrada, el diagnóstico vuelve a ser adivinar. Por eso se fija
+# aquí lo que no puede faltar en él.
+# ---------------------------------------------------------------------
+
+
+def test_resumen_de_puntos_describe_tramo_y_sumas() -> None:
+    puntos = [
+        {"start": datetime(2026, 9, 16, 0, 0, tzinfo=ZONA), "state": 2.0, "sum": 100.0},
+        {"start": datetime(2026, 9, 16, 23, 0, tzinfo=ZONA), "state": 3.0, "sum": 180.0},
+    ]
+
+    resumen = statistics._resumen_puntos(puntos)
+
+    assert "2 punto(s)" in resumen
+    assert "16/09 00:00" in resumen and "16/09 23:00" in resumen
+    # El incremento de la suma es lo que dibuja el Panel de Energía.
+    assert "100.0 -> 180.0 L" in resumen
+
+
+def test_resumen_de_puntos_vacio() -> None:
+    assert statistics._resumen_puntos([]) == "ningún punto"
+
+
+def test_el_registro_dice_cual_es_el_ultimo_punto_importado(
+    importador, caplog: pytest.LogCaptureFixture
+) -> None:
+    ctx = importador(filas=[{"start": 1789041600.0, "sum": 1234.5}])
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(ctx.imp._async_last_checkpoint())
+
+    assert "10/09/2026 14:00" in caplog.text
+    assert "1234.5 L" in caplog.text
+
+
+def test_el_registro_dice_cuantas_franjas_eran_nuevas_y_cuantas_ya_estaban(
+    importador, caplog: pytest.LogCaptureFixture
+) -> None:
+    """
+    Es la línea que distingue 'EMASESA no ha publicado nada' de 'algo va
+    mal': sin ella hay que adivinar por qué no se escribió nada.
+    """
+    ctx = importador(
+        filas=[{"start": 1789041600.0, "sum": 1000.0}],
+        franjas=_franjas({13: 5.0, 14: 7.0, 15: 11.0}),
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(ctx.imp.async_import_hourly_statistics([date(2026, 9, 10)]))
+
+    assert "1 nueva(s)" in caplog.text
+    assert "2 ya cubierta(s)" in caplog.text
+
+
+def test_el_registro_explica_por_que_no_se_escribe_nada(
+    importador, caplog: pytest.LogCaptureFixture
+) -> None:
+    ctx = importador(
+        filas=[{"start": 1789041600.0, "sum": 1000.0}],
+        franjas=_franjas({13: 5.0}),
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(ctx.imp.async_import_hourly_statistics([date(2026, 9, 10)]))
+
+    # Que diga que no hay nada nuevo Y que recuerde el límite del método.
+    assert "Sin franjas nuevas" in caplog.text
+    assert "carga masiva" in caplog.text
+
+
+def test_el_registro_de_la_carga_masiva_dice_el_tramo_y_el_baseline(
+    importador, caplog: pytest.LogCaptureFixture
+) -> None:
+    ctx = importador(filas=None, franjas=_franjas({0: 10.0, 1: 20.0}))
+
+    with caplog.at_level(logging.DEBUG):
+        asyncio.run(
+            ctx.imp.async_reimport_window(
+                [{"date": date(2026, 9, 10), "litros": 30.0}], 500.0
+            )
+        )
+
+    assert "Carga masiva" in caplog.text
+    assert "510.0 -> 530.0 L" in caplog.text
+    assert "500.0 L" in caplog.text
