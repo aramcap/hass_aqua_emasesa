@@ -218,11 +218,25 @@ class EmasesaHourlyStatisticsImporter:
                 acumulado += franja["litros"]
                 nuevas.append(StatisticData(start=inicio, state=franja["litros"], sum=acumulado))
 
+        # Se llama SIEMPRE, aunque no haya franjas nuevas: además de
+        # escribir los puntos, `async_add_external_statistics` reescribe
+        # la fila de metadatos de la serie. Si solo se llamara cuando hay
+        # datos nuevos, una instalación que ya esté al día no volvería a
+        # escribir nunca, y los metadatos se quedarían congelados con la
+        # forma que tuvieran el día que se creó la serie — que es
+        # exactamente lo que pasó al añadir `unit_class` (obligatorio
+        # desde Home Assistant 2025.11): la carga masiva los arreglaba de
+        # rebote y la actualización periódica no podía.
+        async_add_external_statistics(self.hass, self._metadata, nuevas)
         if nuevas:
-            async_add_external_statistics(self.hass, self._metadata, nuevas)
             _LOGGER.debug(
                 "Importadas %d franjas horarias nuevas en la estadística externa %s",
                 len(nuevas),
+                self.statistic_id,
+            )
+        else:
+            _LOGGER.debug(
+                "Sin franjas nuevas que importar; metadatos de %s refrescados",
                 self.statistic_id,
             )
         return len(nuevas)
@@ -278,8 +292,10 @@ class EmasesaHourlyStatisticsImporter:
                 acumulado += franja["litros"]
                 nuevas.append(StatisticData(start=inicio, state=franja["litros"], sum=acumulado))
 
-        if nuevas:
-            async_add_external_statistics(self.hass, self._metadata, nuevas)
+        # Igual que en la importación incremental: la llamada va siempre,
+        # para que los metadatos queden al día aunque el tramo pedido no
+        # haya devuelto ninguna franja.
+        async_add_external_statistics(self.hass, self._metadata, nuevas)
         _LOGGER.debug(
             "Carga masiva: reescritas %d franjas horarias (%d día(s) pedido(s), "
             "%d fallido(s)) en la estadística externa %s",

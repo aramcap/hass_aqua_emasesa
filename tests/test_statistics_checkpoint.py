@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,10 +49,11 @@ class _ApiFalsa:
 @pytest.fixture
 def importador(monkeypatch: pytest.MonkeyPatch):
     """
-    Devuelve (importador, escritas, api) con el recorder simulado.
+    Monta el importador con el recorder simulado.
 
-    `escritas` acumula las franjas que se habrían escrito en la
-    estadística externa; `filas` fija lo que contesta
+    Devuelve un objeto con el importador (`imp`), la api falsa (`api`) y
+    la lista de llamadas al recorder (`llamadas`), cada una con sus
+    metadatos y sus puntos. `filas` fija lo que contesta
     `get_last_statistics`.
     """
 
@@ -67,15 +69,22 @@ def importador(monkeypatch: pytest.MonkeyPatch):
                 {statistic_id: filas} if filas else {}
             ),
         )
-        escritas: list[dict] = []
+        llamadas: list[tuple[dict, list[dict]]] = []
         monkeypatch.setattr(
             statistics,
             "async_add_external_statistics",
-            lambda hass, metadata, puntos: escritas.extend(puntos),
+            lambda hass, metadata, puntos: llamadas.append(
+                (dict(metadata), list(puntos))
+            ),
         )
-        return imp, escritas, api
+        return SimpleNamespace(imp=imp, api=api, llamadas=llamadas)
 
     return _construir
+
+
+def _escritas(ctx: SimpleNamespace) -> list[dict]:
+    """Todas las franjas escritas, juntando las llamadas que hubiera."""
+    return [punto for _, puntos in ctx.llamadas for punto in puntos]
 
 
 # ---------------------------------------------------------------------
@@ -104,9 +113,9 @@ def test_inicio_datetime_se_deja_igual() -> None:
 
 
 def test_checkpoint_sin_datos_previos(importador) -> None:
-    imp, _, _ = importador(filas=None)
+    ctx = importador(filas=None)
 
-    acumulado, ultimo = asyncio.run(imp._async_last_checkpoint())
+    acumulado, ultimo = asyncio.run(ctx.imp._async_last_checkpoint())
 
     assert acumulado == 0.0
     assert ultimo is None
@@ -114,9 +123,9 @@ def test_checkpoint_sin_datos_previos(importador) -> None:
 
 def test_checkpoint_devuelve_datetime_aunque_el_recorder_de_un_float(importador) -> None:
     """La regresión: con un float, `.astimezone()` reventaría."""
-    imp, _, _ = importador(filas=[{"start": 1789041600.0, "sum": 1234.5}])
+    ctx = importador(filas=[{"start": 1789041600.0, "sum": 1234.5}])
 
-    acumulado, ultimo = asyncio.run(imp._async_last_checkpoint())
+    acumulado, ultimo = asyncio.run(ctx.imp._async_last_checkpoint())
 
     assert acumulado == 1234.5
     assert isinstance(ultimo, datetime)
@@ -126,9 +135,9 @@ def test_checkpoint_devuelve_datetime_aunque_el_recorder_de_un_float(importador)
 
 def test_checkpoint_con_suma_nula(importador) -> None:
     """Una fila sin `sum` no debe romper el acumulado."""
-    imp, _, _ = importador(filas=[{"start": 1789041600.0, "sum": None}])
+    ctx = importador(filas=[{"start": 1789041600.0, "sum": None}])
 
-    acumulado, _ = asyncio.run(imp._async_last_checkpoint())
+    acumulado, _ = asyncio.run(ctx.imp._async_last_checkpoint())
 
     assert acumulado == 0.0
 
@@ -148,52 +157,124 @@ def test_importacion_incremental_solo_anade_lo_posterior(importador) -> None:
     entran las franjas de las 15:00 en adelante, y el acumulado sigue
     desde la suma ya guardada.
     """
-    imp, escritas, _ = importador(
+    ctx = importador(
         filas=[{"start": 1789041600.0, "sum": 1000.0}],  # 2026-09-10 14:00 en Sevilla
         franjas=_franjas({13: 5.0, 14: 7.0, 15: 11.0, 16: 13.0}),
     )
 
-    anadidas = asyncio.run(imp.async_import_hourly_statistics([date(2026, 9, 10)]))
+    anadidas = asyncio.run(ctx.imp.async_import_hourly_statistics([date(2026, 9, 10)]))
 
     assert anadidas == 2
-    assert [p["state"] for p in escritas] == [11.0, 13.0]
+    assert [p["state"] for p in _escritas(ctx)] == [11.0, 13.0]
     # El acumulado continúa desde 1000, no desde cero.
-    assert [p["sum"] for p in escritas] == [1011.0, 1024.0]
-    assert [p["start"].astimezone(ZONA).hour for p in escritas] == [15, 16]
+    assert [p["sum"] for p in _escritas(ctx)] == [1011.0, 1024.0]
+    assert [p["start"].astimezone(ZONA).hour for p in _escritas(ctx)] == [15, 16]
 
 
 def test_importacion_incremental_sin_nada_nuevo_no_escribe(importador) -> None:
-    imp, escritas, _ = importador(
+    ctx = importador(
         filas=[{"start": 1789041600.0, "sum": 1000.0}],
         franjas=_franjas({13: 5.0, 14: 7.0}),
     )
 
-    anadidas = asyncio.run(imp.async_import_hourly_statistics([date(2026, 9, 10)]))
+    anadidas = asyncio.run(ctx.imp.async_import_hourly_statistics([date(2026, 9, 10)]))
 
     assert anadidas == 0
-    assert escritas == []
+    assert _escritas(ctx) == []
 
 
 def test_importacion_incremental_no_pide_dias_ya_cubiertos(importador) -> None:
     """Los días anteriores al checkpoint no se vuelven a consultar."""
-    imp, _, api = importador(
+    ctx = importador(
         filas=[{"start": 1789041600.0, "sum": 1000.0}],
         franjas=_franjas({23: 3.0}),
     )
 
     asyncio.run(
-        imp.async_import_hourly_statistics(
+        ctx.imp.async_import_hourly_statistics(
             [date(2026, 9, 8), date(2026, 9, 9), date(2026, 9, 10), date(2026, 9, 11)]
         )
     )
 
-    assert api.dias_pedidos == [date(2026, 9, 10), date(2026, 9, 11)]
+    assert ctx.api.dias_pedidos == [date(2026, 9, 10), date(2026, 9, 11)]
 
 
 def test_primera_importacion_sin_checkpoint_entra_entera(importador) -> None:
-    imp, escritas, _ = importador(filas=None, franjas=_franjas({0: 2.0, 1: 3.0}))
+    ctx = importador(filas=None, franjas=_franjas({0: 2.0, 1: 3.0}))
 
-    anadidas = asyncio.run(imp.async_import_hourly_statistics([date(2026, 9, 10)]))
+    anadidas = asyncio.run(ctx.imp.async_import_hourly_statistics([date(2026, 9, 10)]))
 
     assert anadidas == 2
-    assert [p["sum"] for p in escritas] == [2.0, 5.0]
+    assert [p["sum"] for p in _escritas(ctx)] == [2.0, 5.0]
+
+
+# ---------------------------------------------------------------------
+# Refresco de los metadatos
+#
+# `async_add_external_statistics` no solo escribe puntos: también
+# reescribe la fila de metadatos de la serie. Si únicamente se llamara
+# cuando hay datos nuevos, una instalación al día no volvería a
+# escribirla nunca y los metadatos se quedarían congelados con la forma
+# que tuvieran el día que se creó la serie. Es lo que pasó al añadir
+# `unit_class`: la carga masiva lo arreglaba de rebote (reescribe el
+# tramo entero, así que siempre llama) y la actualización periódica no
+# podía. Qué campos concretos se envían se prueba en
+# `test_statistics_metadata.py`.
+# ---------------------------------------------------------------------
+
+
+def test_sin_franjas_nuevas_igualmente_se_refrescan_los_metadatos(importador) -> None:
+    """La regresión: antes esto no llamaba al recorder en absoluto."""
+    ctx = importador(
+        filas=[{"start": 1789041600.0, "sum": 1000.0}],
+        franjas=_franjas({13: 5.0, 14: 7.0}),  # todas anteriores al checkpoint
+    )
+
+    anadidas = asyncio.run(ctx.imp.async_import_hourly_statistics([date(2026, 9, 10)]))
+
+    assert anadidas == 0
+    assert len(ctx.llamadas) == 1
+    metadatos, puntos = ctx.llamadas[0]
+    assert puntos == []
+    assert metadatos["statistic_id"] == ctx.imp.statistic_id
+
+
+def test_con_franjas_nuevas_se_escriben_junto_a_los_metadatos(importador) -> None:
+    """El caso normal no debe convertirse en dos llamadas distintas."""
+    ctx = importador(
+        filas=[{"start": 1789041600.0, "sum": 1000.0}],
+        franjas=_franjas({15: 11.0, 16: 13.0}),
+    )
+
+    asyncio.run(ctx.imp.async_import_hourly_statistics([date(2026, 9, 10)]))
+
+    assert len(ctx.llamadas) == 1
+    metadatos, puntos = ctx.llamadas[0]
+    assert len(puntos) == 2
+    assert metadatos["statistic_id"] == ctx.imp.statistic_id
+
+
+def test_sin_dias_que_consultar_no_se_llama_al_recorder(importador) -> None:
+    """
+    Sin ventana que mirar no hay nada que hacer, ni siquiera tocar los
+    metadatos: la siguiente actualización con días ya se encarga.
+    """
+    ctx = importador(filas=None)
+
+    assert asyncio.run(ctx.imp.async_import_hourly_statistics([])) == 0
+    assert ctx.llamadas == []
+
+
+def test_la_carga_masiva_refresca_los_metadatos_aunque_no_traiga_nada(
+    importador,
+) -> None:
+    """Mismo criterio en el otro camino, para que no vuelvan a divergir."""
+    ctx = importador(filas=None, franjas=[])
+
+    escritas = asyncio.run(
+        ctx.imp.async_reimport_window([{"date": date(2026, 9, 10), "litros": 0.0}], 0.0)
+    )
+
+    assert escritas == 0
+    assert len(ctx.llamadas) == 1
+    assert ctx.llamadas[0][1] == []
