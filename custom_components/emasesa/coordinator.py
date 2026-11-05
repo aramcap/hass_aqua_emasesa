@@ -32,6 +32,37 @@ _LOGGER = logging.getLogger(__name__)
 # indefinidamente.
 _MAX_FECHAS_RECORDADAS = 400
 
+# Cuántas de las últimas lecturas diarias se guardan en disco para que los
+# sensores de último día / última fecha de lectura sigan teniendo valor
+# tras reiniciar Home Assistant aunque EMASESA no devuelva nada en el
+# primer refresco. Un mes de sobra cubre cualquier ventana normal.
+_MAX_LECTURAS_RECORDADAS = 31
+
+
+def _serializar_lecturas(lecturas: list[dict]) -> list[dict]:
+    """Lecturas diarias a un formato JSON (las fechas pasan a ISO)."""
+    return [
+        {"date": r["date"].isoformat(), "litros": float(r["litros"])} for r in lecturas
+    ]
+
+
+def _deserializar_lecturas(crudo: object) -> list[dict]:
+    """
+    Inverso de `_serializar_lecturas`, tolerante: una entrada corrupta se
+    ignora en vez de impedir que arranque la integración.
+    """
+    if not isinstance(crudo, list):
+        return []
+    lecturas: list[dict] = []
+    for item in crudo:
+        try:
+            lecturas.append(
+                {"date": date.fromisoformat(item["date"]), "litros": float(item["litros"])}
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return sorted(lecturas, key=lambda r: r["date"])
+
 
 class EmasesaCoordinator(DataUpdateCoordinator[dict]):
     """Consulta periódicamente EMASESA y mantiene un contador acumulado."""
@@ -48,6 +79,8 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
         self._store: Store = Store(hass, STORAGE_VERSION, f"{DOMAIN}_{entry.entry_id}")
         self._cumulative_total: float = 0.0
         self._counted_dates: set[str] = set()
+        # Últimas lecturas diarias válidas, persistidas junto al contador.
+        self._ultimas_lecturas: list[dict] = []
         self._storage_loaded = False
         # Momento (UTC) del último fetch a EMASESA que ha terminado sin
         # error, para un sensor de diagnóstico "última actualización" —
@@ -66,17 +99,47 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
         if data:
             self._cumulative_total = float(data.get("total", 0.0))
             self._counted_dates = set(data.get("counted_dates", []))
+            self._ultimas_lecturas = _deserializar_lecturas(data.get("ultimas_lecturas"))
             _LOGGER.debug(
-                "Contador EMASESA restaurado: %.1f L, %d días contados",
+                "Contador EMASESA restaurado: %.1f L, %d días contados, %d lectura(s) "
+                "reciente(s)%s",
                 self._cumulative_total,
                 len(self._counted_dates),
+                len(self._ultimas_lecturas),
+                f" (la última, del {self._ultimas_lecturas[-1]['date'].strftime('%d/%m/%Y')})"
+                if self._ultimas_lecturas
+                else "",
             )
         self._storage_loaded = True
 
     async def _async_save_storage(self) -> None:
         await self._store.async_save(
-            {"total": self._cumulative_total, "counted_dates": sorted(self._counted_dates)}
+            {
+                "total": self._cumulative_total,
+                "counted_dates": sorted(self._counted_dates),
+                "ultimas_lecturas": _serializar_lecturas(self._ultimas_lecturas),
+            }
         )
+
+    def _recordar_lecturas(self, readings: list[dict]) -> bool:
+        """
+        Memoriza las últimas lecturas válidas. Una actualización SIN
+        lecturas no borra lo memorizado. Devuelve si ha cambiado algo.
+        """
+        if not readings:
+            return False
+        recientes = sorted(readings, key=lambda r: r["date"])[-_MAX_LECTURAS_RECORDADAS:]
+        if recientes == self._ultimas_lecturas:
+            return False
+        self._ultimas_lecturas = recientes
+        return True
+
+    async def _async_registrar_lecturas(self, readings: list[dict]) -> None:
+        """Suma al contador lo nuevo, memoriza las lecturas y persiste si algo cambió."""
+        cambio_contador = self._apply_readings(readings)
+        cambio_lecturas = self._recordar_lecturas(readings)
+        if cambio_contador or cambio_lecturas:
+            await self._async_save_storage()
 
     def _apply_readings(self, readings: list[dict]) -> bool:
         """
@@ -110,13 +173,19 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
         (el consumo de ese día no deja de existir porque EMASESA no
         publique uno nuevo).
 
+        Esto también vale tras reiniciar Home Assistant: la última lectura
+        válida se persiste en disco junto al contador acumulado.
+
         Que la fecha se quede quieta es además la señal que documenta
         `ultima_fecha_lectura`: permite ver cuánto lleva EMASESA sin
         publicar. Para saber si la integración sigue consultando bien
         está el sensor de diagnóstico `ultima_actualizacion`.
         """
         if not readings:
-            readings = (self.data or {}).get("readings") or []
+            # Primero lo que ya hay en memoria; si no hay nada (p. ej. el
+            # primer refresco tras reiniciar Home Assistant), lo que se
+            # guardó en disco la última vez que EMASESA devolvió algo.
+            readings = (self.data or {}).get("readings") or self._ultimas_lecturas
         return {
             "readings": readings,
             "latest": readings[-1] if readings else None,
@@ -176,8 +245,7 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
                 hasta,
             )
 
-        if self._apply_readings(readings):
-            await self._async_save_storage()
+        await self._async_registrar_lecturas(readings)
 
         # Estadística externa horaria (Panel de Energía). La carga
         # masiva (primera vez, o manual desde las opciones) recalcula y
@@ -282,8 +350,7 @@ class EmasesaCoordinator(DataUpdateCoordinator[dict]):
             self._entry.async_start_reauth(self.hass)
             raise
 
-        if self._apply_readings(readings):
-            await self._async_save_storage()
+        await self._async_registrar_lecturas(readings)
 
         try:
             escritas = await self._hourly_stats.async_reimport_window(
