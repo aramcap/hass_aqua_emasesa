@@ -230,6 +230,49 @@ def _ajusta_rango_diario(
     return desde, hasta
 
 
+# Si una consulta DIARIA devuelve la vista horaria (ver
+# `_es_vista_horaria`), se reintenta con una ventana más ancha hacia atrás:
+# primero una semana y después un mes. Son ventanas y no incrementos para
+# no acumular peticiones: como mucho dos reintentos por actualización.
+_REINTENTOS_VENTANA_DIAS = (7, 30)
+
+
+def _es_vista_horaria(pares: list[tuple[str, float]]) -> bool:
+    """
+    Indica si la respuesta de una consulta DIARIA es en realidad el
+    desglose horario: hay etiquetas y TODAS son franjas tipo "13-14".
+
+    EMASESA cambia a la vista horaria cuando el rango efectivo de la
+    consulta se queda en un solo día, y el rango efectivo puede ser más
+    corto que el pedido (p. ej. si recorta por su cuenta lo que aún no
+    ha publicado). Esas etiquetas no son fechas, y la consulta diaria
+    las descarta enteras: sin esta detección no se distingue "no hay
+    datos" de "he pedido mal".
+    """
+    return bool(pares) and all(_etiqueta_a_hora(etiqueta) is not None for etiqueta, _ in pares)
+
+
+def _pares_a_lecturas(pares: list[tuple[str, float]], hasta: date) -> list[dict]:
+    """
+    Convierte los pares (etiqueta, litros) de la vista diaria en lecturas
+    [{"date": date, "litros": float}] ordenadas, descartando lo que no
+    sea una fecha diaria interpretable.
+    """
+    lecturas: list[dict] = []
+    for etiqueta, litros in pares:
+        fecha = _etiqueta_a_fecha(etiqueta, hasta)
+        if fecha is None:
+            _LOGGER.debug(
+                "Etiqueta '%s' no se ha podido interpretar como fecha diaria; "
+                "se descarta (¿rango de 1 día devolviendo vista horaria?)",
+                etiqueta,
+            )
+            continue
+        lecturas.append({"date": fecha, "litros": float(litros)})
+    lecturas.sort(key=lambda r: r["date"])
+    return lecturas
+
+
 def _parse_chart_response(xml_text: str) -> list[tuple[str, float]]:
     """Devuelve [(etiqueta, litros), ...] emparejados directamente por índice."""
     data_match = re.search(r"data:(\[\[[\d\s,.\-]*\]\])", xml_text)
@@ -520,6 +563,20 @@ class EmasesaApiClient:
             resp.raise_for_status()
             return await resp.text()
 
+    async def _consulta_pares(self, desde: date, hasta: date) -> list[tuple[str, float]]:
+        """
+        Una consulta completa (página fresca, ViewState nuevo, petición y
+        parseo). Se vuelve a pedir la página cada vez, igual que hace el
+        desglose horario: el ViewState de JSF puede cambiar entre
+        peticiones y reutilizar uno viejo es una fuente de fallos raros.
+        """
+        html = await self._get_consumo_page()
+        viewstate = _extract_viewstate(html)
+        text = await self._post_consulta(
+            desde.strftime(DATE_FMT_EMASESA), hasta.strftime(DATE_FMT_EMASESA), viewstate
+        )
+        return _parse_chart_response(text)
+
     async def async_get_daily_readings(self, desde: date, hasta: date) -> list[dict]:
         """
         Devuelve [{"date": date(...), "litros": float}, ...] ordenado
@@ -570,20 +627,41 @@ class EmasesaApiClient:
             desde.strftime(DATE_FMT_EMASESA), hasta.strftime(DATE_FMT_EMASESA), viewstate
         )
         pares = _parse_chart_response(text)
+        resultado = _pares_a_lecturas(pares, hasta)
 
-        resultado: list[dict] = []
-        for etiqueta, litros in pares:
-            fecha = _etiqueta_a_fecha(etiqueta, hasta)
-            if fecha is None:
+        # Respuesta horaria a una consulta diaria: el rango efectivo se ha
+        # quedado en un solo día. Se amplía hacia atrás (nunca hacia
+        # delante, que pediría días sin publicar) hasta que llegue la
+        # vista diaria o se agoten los reintentos. Una respuesta
+        # íntegramente horaria nunca produce lecturas, así que no hace
+        # falta comprobarlo aparte.
+        if _es_vista_horaria(pares):
+            for ventana in _REINTENTOS_VENTANA_DIAS:
+                desde_amplio = min(desde, hasta - timedelta(days=ventana - 1))
+                if desde_amplio >= desde:
+                    continue  # el rango pedido ya era igual de ancho o más
                 _LOGGER.debug(
-                    "Etiqueta '%s' no se ha podido interpretar como fecha diaria; "
-                    "se descarta (¿rango de 1 día devolviendo vista horaria?)",
-                    etiqueta,
+                    "La consulta %s..%s ha devuelto la vista horaria (%d franjas) en "
+                    "lugar de la diaria; se reintenta con una ventana de %d día(s): "
+                    "%s..%s",
+                    desde,
+                    hasta,
+                    len(pares),
+                    ventana,
+                    desde_amplio,
+                    hasta,
                 )
-                continue
-            resultado.append({"date": fecha, "litros": float(litros)})
+                try:
+                    pares = await self._consulta_pares(desde_amplio, hasta)
+                except EmasesaAuthError:
+                    raise  # incluye EmasesaTwoFactorRequired: lo gestiona el coordinator
+                except EmasesaApiError as err:
+                    _LOGGER.debug("El reintento con %d día(s) ha fallado: %s", ventana, err)
+                    break
+                resultado = _pares_a_lecturas(pares, hasta)
+                if resultado:
+                    break
 
-        resultado.sort(key=lambda r: r["date"])
         if resultado:
             _LOGGER.debug(
                 "Lecturas diarias obtenidas: %s",
@@ -592,12 +670,19 @@ class EmasesaApiClient:
                 ),
             )
         else:
+            muestra = ", ".join(f"{e!r}={v}" for e, v in pares[:4])
             _LOGGER.warning(
                 "La consulta de consumo %s -> %s no ha devuelto ninguna lectura "
-                "diaria interpretable (se han descartado %d etiqueta(s) del gráfico)",
+                "diaria interpretable (%d etiqueta(s) en el gráfico, %s; primeras: "
+                "%s%s)",
                 desde,
                 hasta,
                 len(pares),
+                "todas son franjas horarias"
+                if _es_vista_horaria(pares)
+                else "no son franjas horarias ni fechas diarias",
+                muestra or "ninguna",
+                ", ..." if len(pares) > 4 else "",
             )
         return resultado
 
