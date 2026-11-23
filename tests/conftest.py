@@ -19,7 +19,9 @@ Para conseguirlo hacen falta dos apaños, los dos acotados a este fichero:
    cabecera. Se registran unos módulos `homeassistant.*` mínimos para
    que el import no falle; lo que se prueba de esos módulos sigue
    siendo lógica propia sobre diccionarios y fechas, no comportamiento
-   de Home Assistant.
+   de Home Assistant. Lo mismo vale para el registro de incidencias y la
+   base de los flujos de Reparaciones: los tests de `repairs.py` ejercitan
+   la decisión de qué borrar y cuándo, no el comportamiento de Reparaciones.
    Los stubs imitan una versión ACTUAL de Home Assistant (con
    `StatisticMeanType` y con `unit_class` en `StatisticMetaData`), que
    es contra lo que `test_statistics_metadata.py` comprueba qué campos
@@ -110,6 +112,34 @@ def _stub_homeassistant() -> None:
     class _ConfigEntryAuthFailed(Exception):
         pass
 
+    class _IssueSeverity:
+        WARNING = "warning"
+
+    class _RepairsFlow:
+        """
+        Base sustituta de la de Reparaciones. Los métodos devuelven un dict
+        con lo esencial del resultado real (tipo y motivo), que es lo que
+        miran los tests; los tres son síncronos como en Home Assistant.
+        """
+
+        handler = "emasesa"
+        issue_id = ""
+        data = None
+        hass = None
+
+        def async_show_form(self, *, step_id, data_schema=None, description_placeholders=None):
+            return {
+                "type": "form",
+                "step_id": step_id,
+                "description_placeholders": description_placeholders,
+            }
+
+        def async_create_entry(self, *, title=None, data):
+            return {"type": "create_entry", "data": data}
+
+        def async_abort(self, *, reason, description_placeholders=None):
+            return {"type": "abort", "reason": reason}
+
     class _DtUtil:
         """Lo único que se usa de `homeassistant.util.dt` en el módulo."""
 
@@ -152,6 +182,16 @@ def _stub_homeassistant() -> None:
     _paquete("homeassistant.exceptions", ConfigEntryAuthFailed=_ConfigEntryAuthFailed)
     _paquete("homeassistant.helpers", inexistente)
     _paquete("homeassistant.helpers.storage", Store=_Marcador)
+    _paquete(
+        "homeassistant.helpers.issue_registry",
+        IssueSeverity=_IssueSeverity,
+        async_create_issue=_Marcador,
+        async_delete_issue=_Marcador,
+    )
+    sys.modules["homeassistant.helpers"].issue_registry = sys.modules[  # type: ignore[attr-defined]
+        "homeassistant.helpers.issue_registry"
+    ]
+    _paquete("homeassistant.components.repairs", inexistente, RepairsFlow=_RepairsFlow)
     _paquete(
         "homeassistant.helpers.update_coordinator",
         DataUpdateCoordinator=_Generico,

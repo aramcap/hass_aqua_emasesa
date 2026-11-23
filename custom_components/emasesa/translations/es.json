@@ -88,5 +88,24 @@
         "name": "Forzar lectura"
       }
     }
+  },
+  "issues": {
+    "serie_huerfana": {
+      "title": "Serie de estadísticas huérfana de EMASESA ({id_corto})",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Eliminar la serie huérfana",
+            "description": "Se va a **eliminar** la serie de estadísticas `{statistic_id}` («{nombre}»).\n\nYa no pertenece a ninguna cuenta configurada y nada escribe en ella. {ultimo_dato}\n\n{activa}\n\n**Esta acción no se puede deshacer:** se perderá todo el histórico guardado en esa serie. Si el Panel de Energía o alguna tarjeta usa esta serie, cámbiala antes por la que sí recibe datos."
+          }
+        },
+        "abort": {
+          "ya_no_es_huerfana": "Esta serie ya no existe o ya no es huérfana, así que no hay nada que eliminar.",
+          "datos_invalidos": "La incidencia no contiene los datos necesarios y se retirará.",
+          "recorder_no_disponible": "No se ha podido consultar el historial de estadísticas. Inténtalo de nuevo en unos minutos.",
+          "tiempo_agotado": "La orden de eliminación se ha enviado, pero el historial no ha confirmado que haya terminado. Comprueba en unos minutos si la serie sigue ahí y, si es así, vuelve a intentarlo."
+        }
+      }
+    }
   }
 }

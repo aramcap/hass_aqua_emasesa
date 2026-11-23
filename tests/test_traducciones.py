@@ -115,3 +115,75 @@ def test_el_boton_lanza_la_misma_lectura_que_el_temporizador() -> None:
 
     assert "self.coordinator.async_refresh()" in fuente
     assert "async_get_daily_readings" not in fuente
+
+
+# ---------------------------------------------------------------------
+# Incidencias de Reparaciones
+#
+# Una clave sin traducir, un motivo de aborto sin texto o una plantilla que
+# pide un placeholder que nadie rellena no rompen ningún test del flujo: se
+# ven en la interfaz, y el último incluso puede lanzar un error al abrir el
+# diálogo de reparación.
+# ---------------------------------------------------------------------
+
+
+def _clave_de_incidencia() -> str:
+    fuente = (INTEGRACION / "huerfanas.py").read_text(encoding="utf-8")
+    return re.search(r'CLAVE_TRADUCCION_INCIDENCIA = "([^"]+)"', fuente).group(1)
+
+
+def _motivos_de_aborto() -> set[str]:
+    fuente = (INTEGRACION / "repairs.py").read_text(encoding="utf-8")
+    return set(re.findall(r'(?:reason=|_abortar_y_retirar\()"(\w+)"', fuente))
+
+
+@pytest.mark.parametrize("fichero", TEXTOS)
+def test_la_incidencia_esta_traducida(fichero: str) -> None:
+    incidencia = _cargar(fichero)["issues"][_clave_de_incidencia()]
+
+    assert incidencia["title"]
+    paso = incidencia["fix_flow"]["step"]["confirm"]
+    assert paso["title"] and paso["description"]
+
+
+@pytest.mark.parametrize("fichero", TEXTOS)
+def test_todo_motivo_de_aborto_tiene_texto(fichero: str) -> None:
+    motivos = _motivos_de_aborto()
+    traducidos = _cargar(fichero)["issues"][_clave_de_incidencia()]["fix_flow"]["abort"]
+
+    assert motivos, "no se ha encontrado ningún motivo de aborto en repairs.py"
+    assert motivos <= set(traducidos), f"sin traducir en {fichero}: {motivos - set(traducidos)}"
+    # Y al revés: ningún texto de un motivo que el código ya no usa.
+    assert set(traducidos) <= motivos, f"sobran en {fichero}: {set(traducidos) - motivos}"
+
+
+@pytest.mark.parametrize("fichero", TEXTOS)
+def test_las_plantillas_solo_piden_placeholders_que_se_rellenan(fichero: str) -> None:
+    """Pedir uno que no se pasa hace fallar al abrir el diálogo de reparación."""
+    from emasesa.huerfanas import placeholders_de_huerfana
+
+    rellenados = set(
+        placeholders_de_huerfana(
+            {"statistic_id": "emasesa:abc_consumo_horario", "name": "x"}, [], ""
+        )
+    )
+    incidencia = _cargar(fichero)["issues"][_clave_de_incidencia()]
+    plantillas = [
+        incidencia["title"],
+        incidencia["fix_flow"]["step"]["confirm"]["title"],
+        incidencia["fix_flow"]["step"]["confirm"]["description"],
+        *incidencia["fix_flow"]["abort"].values(),
+    ]
+
+    pedidos = set(re.findall(r"\{(\w+)\}", " ".join(plantillas)))
+
+    assert pedidos <= rellenados, f"{fichero} pide {pedidos - rellenados}, que nadie rellena"
+
+
+def test_la_confirmacion_avisa_de_que_no_se_puede_deshacer() -> None:
+    """En una acción irreversible, esa advertencia no puede perderse en una edición de textos."""
+    es = _cargar("translations/es.json")["issues"]["serie_huerfana"]["fix_flow"]["step"]["confirm"]
+    en = _cargar("translations/en.json")["issues"]["serie_huerfana"]["fix_flow"]["step"]["confirm"]
+
+    assert "no se puede deshacer" in es["description"]
+    assert "cannot be undone" in en["description"]

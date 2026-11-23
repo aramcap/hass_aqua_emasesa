@@ -2,3 +2,4 @@
 # Assistant: ver tests/conftest.py).
 pytest>=8.0
 aiohttp>=3.9
+voluptuous>=0.13  # dependencia real de Home Assistant; la usan los flujos de Reparaciones

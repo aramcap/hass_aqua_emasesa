@@ -88,5 +88,24 @@
         "name": "Force reading"
       }
     }
+  },
+  "issues": {
+    "serie_huerfana": {
+      "title": "Orphaned EMASESA statistics series ({id_corto})",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Delete the orphaned series",
+            "description": "The statistics series `{statistic_id}` (\"{nombre}\") is going to be **deleted**.\n\nIt no longer belongs to any configured account and nothing writes to it. {ultimo_dato}\n\n{activa}\n\n**This cannot be undone:** all the history stored in that series will be lost. If the Energy dashboard or a card uses this series, switch it to the one that does receive data first."
+          }
+        },
+        "abort": {
+          "ya_no_es_huerfana": "This series no longer exists or is no longer orphaned, so there is nothing to delete.",
+          "datos_invalidos": "The issue does not contain the required data and will be removed.",
+          "recorder_no_disponible": "The statistics history could not be queried. Try again in a few minutes.",
+          "tiempo_agotado": "The delete command was sent, but the history has not confirmed that it finished. Check in a few minutes whether the series is still there and, if so, try again."
+        }
+      }
+    }
   }
 }

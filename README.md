@@ -209,7 +209,9 @@ Hay una estadística de EMASESA que no corresponde a ninguna cuenta configurada:
 La serie que sí recibe datos es emasesa:<id actual>_consumo_horario ...
 ```
 
-Para resolverlo, en el Panel de Energía quita la fuente de agua y vuelve a seleccionar la serie activa (la del segundo identificador). La integración **no borra** la antigua por su cuenta; si no la necesitas, se elimina con el comando de websocket `recorder/clear_statistics` indicando su identificador.
+Para resolverlo, en el Panel de Energía quita la fuente de agua y vuelve a seleccionar la serie activa (la del segundo identificador). Para eliminar la antigua, la integración abre además una incidencia en **Ajustes → Reparaciones** («Serie de estadísticas huérfana de EMASESA»). Al pulsar **Reparar** se muestra qué serie se va a borrar, la fecha de su último dato y cuál es la que sí recibe datos, y pide confirmación. **Es irreversible:** se pierde todo el histórico guardado en esa serie, así que cambia antes el Panel de Energía a la serie activa si usaba la antigua.
+
+La integración nunca borra nada sin esa confirmación, y comprueba otra vez al confirmar que la serie sigue siendo huérfana: nunca elimina la serie de una cuenta configurada, ni siquiera deshabilitada, ni nada que no sea de EMASESA.
 
 ### Activa el registro de depuración
 

@@ -113,8 +113,8 @@ def test_el_mensaje_permite_distinguir_las_dos_series_que_se_llaman_igual() -> N
     # Ambos identificadores: es lo único que las distingue.
     assert ANTIGUA in texto
     assert MIA in texto
-    assert "recorder/clear_statistics" in texto
-    # Y deja claro que la integración no ha borrado nada.
+    # Dice dónde se elimina, y que la integración no lo ha hecho por su cuenta.
+    assert "Reparaciones" in texto
     assert "no borra nada" in texto
 
 
