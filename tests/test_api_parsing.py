@@ -309,3 +309,50 @@ def test_respuesta_horaria_no_cuela_lecturas_diarias() -> None:
     fechas = [_etiqueta_a_fecha(etiqueta, date(2026, 9, 7)) for etiqueta, _ in pares]
 
     assert fechas == [None] * 24
+
+
+# ---------------------------------------------------------------------
+# Descubrimiento de los campos de la pantalla de verificación
+# ---------------------------------------------------------------------
+
+
+def test_descubre_campos_2fa_con_ids_distintos_a_los_conocidos() -> None:
+    from emasesa.api import _descubrir_campos_2fa
+
+    html = (
+        '<form id="formData" name="formData">'
+        '<input id="formData:j_idt301" name="formData:j_idt301" type="text" maxlength="6"/>'
+        '<input id="formData:j_idt305_input" name="formData:j_idt305_input" type="checkbox"/>'
+        '<button id="formData:j_idt320" name="formData:j_idt320" type="submit">Verificar</button>'
+        "</form>"
+    )
+
+    assert _descubrir_campos_2fa(html) == {
+        "codigo": "formData:j_idt301",
+        "confianza": "formData:j_idt305_input",
+        "boton": "formData:j_idt320",
+    }
+
+
+def test_campos_2fa_no_encontrados_caen_a_los_conocidos() -> None:
+    from emasesa.api import (
+        FIELD_2FA_CODE,
+        FIELD_2FA_TRUST_DEVICE,
+        FIELD_2FA_VERIFY_BTN,
+        _descubrir_campos_2fa,
+    )
+
+    assert _descubrir_campos_2fa("<html></html>") == {
+        "codigo": FIELD_2FA_CODE,
+        "confianza": FIELD_2FA_TRUST_DEVICE,
+        "boton": FIELD_2FA_VERIFY_BTN,
+    }
+
+
+def test_descubre_campos_en_el_fixture_2fa() -> None:
+    from emasesa.api import _descubrir_campos_2fa
+
+    campos = _descubrir_campos_2fa(leer_fixture("pagina_2fa.html"))
+
+    assert campos["codigo"] == "formData:j_idt152"
+    assert campos["boton"] == "formData:j_idt167"

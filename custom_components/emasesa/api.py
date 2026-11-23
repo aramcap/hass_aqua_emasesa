@@ -172,6 +172,66 @@ def _extract_viewstate(html: str) -> str:
     return m.group(1)
 
 
+def _atributos(etiqueta: str) -> dict[str, str]:
+    """Atributos de una etiqueta HTML (`<input id="x" ...>`) en minúsculas."""
+    return {
+        m.group(1).lower(): m.group(2) if m.group(2) is not None else m.group(3) or ""
+        for m in re.finditer(r'([\w:-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\')', etiqueta)
+    }
+
+
+def _descubrir_campos_2fa(html: str) -> dict[str, str]:
+    """
+    Localiza en la pantalla de verificación los campos del formulario:
+    `codigo` (texto), `confianza` (casilla) y `boton` (Verificar).
+
+    Los identificadores `j_idtNNN` los genera JSF según la posición de cada
+    componente en la página, así que cambian cuando EMASESA retoca la pantalla.
+    Se descubren en cada verificación; si algún campo no se encuentra se cae
+    al valor fijo conocido y se avisa en el registro.
+    """
+    campos: dict[str, str] = {}
+    for etiqueta in re.findall(r"<(?:input|button)\b[^>]*>", html, flags=re.IGNORECASE):
+        attrs = _atributos(etiqueta)
+        nombre = attrs.get("name") or attrs.get("id") or ""
+        if not nombre.startswith(f"{FORM_2FA_ID}:"):
+            continue
+        tipo = attrs.get("type", "text" if etiqueta.lower().startswith("<input") else "submit").lower()
+        if tipo == "checkbox":
+            campos.setdefault("confianza", nombre)
+        elif tipo in ("text", "tel", "number", "password") and not nombre.endswith("_focus"):
+            campos.setdefault("codigo", nombre)
+        elif tipo in ("submit", "button") or etiqueta.lower().startswith("<button"):
+            campos.setdefault("boton", nombre)
+
+    por_defecto = {
+        "codigo": FIELD_2FA_CODE,
+        "confianza": FIELD_2FA_TRUST_DEVICE,
+        "boton": FIELD_2FA_VERIFY_BTN,
+    }
+    for clave, valor in por_defecto.items():
+        if clave not in campos:
+            _LOGGER.warning(
+                "No se ha encontrado el campo '%s' en la pantalla de verificación de "
+                "EMASESA; se usa el identificador conocido (%s), que puede estar "
+                "desfasado si el portal ha cambiado",
+                clave,
+                valor,
+            )
+            campos[clave] = valor
+    _LOGGER.debug(
+        "Campos de la verificación en dos pasos: %s%s",
+        campos,
+        "" if all(campos[k] == v for k, v in por_defecto.items()) else " (distintos de los conocidos)",
+    )
+    return campos
+
+
+def _resumen_respuesta(texto: str, limite: int = 600) -> str:
+    """Respuesta recortada y en una línea, para depurar sin volcar la página entera."""
+    return re.sub(r"\s+", " ", texto).strip()[:limite]
+
+
 def _looks_like_login_page(html: str) -> bool:
     return f'id="{FIELD_LOGIN_PASSWORD}"' in html or 'name="password"' in html
 
@@ -387,6 +447,7 @@ class EmasesaApiClient:
         # que async_submit_2fa_code() no tenga que volver a pedir la
         # página (evita una petición y un posible cambio de ViewState).
         self._pending_2fa_viewstate: str | None = None
+        self._pending_2fa_campos: dict[str, str] | None = None
 
     async def async_login(self) -> None:
         """
@@ -430,6 +491,7 @@ class EmasesaApiClient:
                 "EMASESA pide verificación por SMS/email para este device_id"
             )
             self._pending_2fa_viewstate = _extract_viewstate(html2)
+            self._pending_2fa_campos = _descubrir_campos_2fa(html2)
             raise EmasesaTwoFactorRequired(
                 "EMASESA requiere un código de verificación (SMS/email) para "
                 "este dispositivo."
@@ -456,21 +518,27 @@ class EmasesaApiClient:
                 "verificación (llama primero a async_login())."
             )
 
+        campos = self._pending_2fa_campos or {
+            "codigo": FIELD_2FA_CODE,
+            "confianza": FIELD_2FA_TRUST_DEVICE,
+            "boton": FIELD_2FA_VERIFY_BTN,
+        }
+        boton = campos["boton"]
         payload = {
             "javax.faces.partial.ajax": "true",
-            "javax.faces.source": FIELD_2FA_VERIFY_BTN,
+            "javax.faces.source": boton,
             "javax.faces.partial.execute": "@all",
             "javax.faces.partial.render": FORM_2FA_ID,
-            FIELD_2FA_VERIFY_BTN: FIELD_2FA_VERIFY_BTN,
+            boton: boton,
             FORM_2FA_ID: FORM_2FA_ID,
-            FIELD_2FA_CODE: code.strip(),
+            campos["codigo"]: code.strip(),
             VIEWSTATE_FIELD: self._pending_2fa_viewstate,
         }
         if trust_device:
             # Casilla "Dispositivo de confianza": un checkbox HTML
             # marcado se envía como "on" cuando no se indica un `value`
             # explícito, que es el caso aquí (igual que hace el navegador).
-            payload[FIELD_2FA_TRUST_DEVICE] = "on"
+            payload[campos["confianza"]] = "on"
 
         headers = {
             "User-Agent": USER_AGENT,
@@ -483,10 +551,18 @@ class EmasesaApiClient:
         async with self._session.post(
             TWO_FACTOR_URL, data=payload, headers=headers, timeout=REQUEST_TIMEOUT
         ) as resp:
+            estado = resp.status
             resp.raise_for_status()
             html = await resp.text()
 
+        _LOGGER.debug(
+            "Respuesta a la verificación en dos pasos: HTTP %s, %d bytes: %s",
+            estado,
+            len(html),
+            _resumen_respuesta(html),
+        )
         self._pending_2fa_viewstate = None
+        self._pending_2fa_campos = None
 
         if _looks_like_2fa_page(html):
             # Sigue en la pantalla de verificación: código incorrecto (o
@@ -494,6 +570,7 @@ class EmasesaApiClient:
             # reintentarlo desde el mismo flujo.
             try:
                 self._pending_2fa_viewstate = _extract_viewstate(html)
+                self._pending_2fa_campos = _descubrir_campos_2fa(html)
             except EmasesaApiError:
                 pass
             raise EmasesaAuthError(
@@ -505,6 +582,29 @@ class EmasesaApiClient:
             raise EmasesaAuthError(
                 "EMASESA ha devuelto a la pantalla de login tras el código de "
                 "verificación; inténtalo de nuevo."
+            )
+
+        if "<error" in html:
+            # Error de JSF (p. ej. ViewState caducado), no un código erróneo.
+            raise EmasesaApiError(
+                "EMASESA ha respondido con un error al verificar el código: "
+                f"{_resumen_respuesta(html, 300)}"
+            )
+
+        # La respuesta AJAX por sí sola no prueba nada: se confirma pidiendo
+        # una página que exige sesión completa.
+        async with self._session.get(
+            CONSUMO_URL, headers={"User-Agent": USER_AGENT}, timeout=REQUEST_TIMEOUT
+        ) as resp:
+            comprobacion = await resp.text()
+        if _looks_like_login_page(comprobacion) or _looks_like_2fa_page(comprobacion):
+            self._logged_in = False
+            _LOGGER.debug(
+                "Tras el código, EMASESA sigue sin dar acceso. Respuesta: %s",
+                _resumen_respuesta(comprobacion),
+            )
+            raise EmasesaAuthError(
+                "EMASESA no ha aceptado el código de verificación; inténtalo de nuevo."
             )
 
         self._logged_in = True
