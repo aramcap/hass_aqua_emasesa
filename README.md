@@ -29,6 +29,7 @@ Integración personalizada (no oficial) para leer el consumo de agua de [EMASESA
   - [Solución de problemas](#solución-de-problemas)
     - [Pide reautenticación constantemente](#pide-reautenticación-constantemente)
     - [No llega el código SMS/email](#no-llega-el-código-smsemail)
+    - [El Panel de Energía no muestra datos nuevos y hay dos "consumo por hora"](#el-panel-de-energía-no-muestra-datos-nuevos-y-hay-dos-consumo-por-hora)
     - [Activa el registro de depuración](#activa-el-registro-de-depuración)
     - [Lista de comprobación de instalación](#lista-de-comprobación-de-instalación)
   - [Aviso](#aviso)
@@ -196,6 +197,19 @@ Es señal de que EMASESA ha dejado de confiar en el identificador de dispositivo
 ### No llega el código SMS/email
 
 Comprueba que el teléfono/email registrado en tu cuenta de la Oficina Online sigue siendo correcto entrando manualmente en el portal de EMASESA. La integración no puede solicitar el reenvío del código por ti.
+
+### El Panel de Energía no muestra datos nuevos y hay dos "consumo por hora"
+
+Si borras la integración y la vuelves a añadir, la cuenta nueva recibe un identificador interno distinto y escribe en una estadística **nueva**; la antigua se queda en Home Assistant con exactamente el mismo nombre y sin que nada escriba ya en ella. En el selector del Panel de Energía las dos se ven idénticas, y si eliges la antigua no verás nunca datos nuevos aunque la integración funcione bien.
+
+Al arrancar, la integración lo detecta y deja un aviso en el registro (una sola vez por ejecución) con el identificador de cada serie:
+
+```
+Hay una estadística de EMASESA que no corresponde a ninguna cuenta configurada: emasesa:<id antiguo>_consumo_horario ...
+La serie que sí recibe datos es emasesa:<id actual>_consumo_horario ...
+```
+
+Para resolverlo, en el Panel de Energía quita la fuente de agua y vuelve a seleccionar la serie activa (la del segundo identificador). La integración **no borra** la antigua por su cuenta; si no la necesitas, se elimina con el comando de websocket `recorder/clear_statistics` indicando su identificador.
 
 ### Activa el registro de depuración
 

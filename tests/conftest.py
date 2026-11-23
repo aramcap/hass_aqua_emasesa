@@ -144,6 +144,7 @@ def _stub_homeassistant() -> None:
     _paquete(
         "homeassistant.components.recorder.statistics",
         async_add_external_statistics=_Marcador,
+        async_list_statistic_ids=_Marcador,
         get_last_statistics=_Marcador,
     )
     # Lo que necesita `coordinator.py` por encima de lo anterior.

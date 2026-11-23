@@ -129,6 +129,22 @@ def _inicio_a_datetime(start: float | datetime) -> datetime:
     return dt_util.utc_from_timestamp(start)
 
 
+# Lo que va tras el identificador de la cuenta en el `statistic_id`.
+SUFIJO_SERIE_HORARIA = "_consumo_horario"
+
+
+def statistic_id_de(entry_id: str) -> str:
+    """
+    `statistic_id` de la estadística externa horaria de una cuenta.
+
+    Es la ÚNICA fuente de verdad: el importador lo usa para escribir y la
+    detección de series huérfanas (`huerfanas.py`) para saber cuáles
+    deberían existir. Si se calcularan por separado y divergieran, todas
+    las series saldrían como huérfanas.
+    """
+    return f"{DOMAIN}:{_slug(entry_id)}{SUFIJO_SERIE_HORARIA}"
+
+
 def _resumen_puntos(puntos: list[StatisticData]) -> str:
     """
     Describe en una línea lo que se va a escribir en la estadística.
@@ -158,7 +174,7 @@ class EmasesaHourlyStatisticsImporter:
     def __init__(self, hass: HomeAssistant, entry_id: str, entry_title: str, api: EmasesaApiClient) -> None:
         self.hass = hass
         self.api = api
-        self.statistic_id = f"{DOMAIN}:{_slug(entry_id)}_consumo_horario"
+        self.statistic_id = statistic_id_de(entry_id)
         # Los metadatos se montan campo a campo porque `StatisticMetaData`
         # ha ido cambiando: `has_mean` quedó obsoleto en Home Assistant
         # 2025.5 a favor de `mean_type`, y `unit_class` pasó a ser

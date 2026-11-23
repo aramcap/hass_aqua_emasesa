@@ -17,6 +17,7 @@ from .const import (
     DOMAIN,
 )
 from .coordinator import EmasesaCoordinator
+from .huerfanas import async_avisar_de_series_huerfanas
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +44,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # Avisa si quedan series de una cuenta anterior (ver `huerfanas.py`). Va
+    # al final y no puede fallar: es solo informativo.
+    await async_avisar_de_series_huerfanas(hass, entry)
     return True
 
 
