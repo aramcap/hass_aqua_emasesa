@@ -114,6 +114,8 @@ FIELD_2FA_VERIFY_BTN = "formData:j_idt167"
 FORM_DATE_ID = "form-date"
 FIELD_DESDE = "form-date:button_input"
 FIELD_HASTA = "form-date:button2_input"
+# Valor conocido del botón "Consultar"; en cada consulta se descubre el
+# vigente en la propia página (ver `_descubrir_boton_consultar`).
 FIELD_CONSULTAR_BTN = "form-date:j_idt169"
 
 VIEWSTATE_FIELD = "javax.faces.ViewState"
@@ -225,6 +227,78 @@ def _descubrir_campos_2fa(html: str) -> dict[str, str]:
         "" if all(campos[k] == v for k, v in por_defecto.items()) else " (distintos de los conocidos)",
     )
     return campos
+
+
+def _campos_formulario_consulta(html: str) -> list[tuple[str, str, str]]:
+    """
+    Controles (`<input>` y `<button>`) del formulario de consulta de consumo
+    cuyo nombre empieza por `form-date:`, como (nombre, tipo, texto visible).
+    El texto visible es el contenido del `<button>` sin etiquetas, o el
+    `value` de un `<input>` de tipo botón; para el resto, cadena vacía.
+    """
+    campos: list[tuple[str, str, str]] = []
+    patron = re.compile(
+        r"<button\b([^>]*)>(.*?)</button>|<input\b([^>]*)>", flags=re.IGNORECASE | re.DOTALL
+    )
+    for m in patron.finditer(html):
+        es_boton = m.group(1) is not None
+        attrs = _atributos(m.group(1) if es_boton else m.group(3))
+        nombre = attrs.get("name") or attrs.get("id") or ""
+        if not nombre.startswith(f"{FORM_DATE_ID}:"):
+            continue
+        tipo = attrs.get("type", "submit" if es_boton else "text").lower()
+        if es_boton:
+            texto = re.sub(r"<[^>]+>", " ", m.group(2))
+        elif tipo in ("submit", "button"):
+            texto = attrs.get("value", "")
+        else:
+            texto = ""
+        campos.append((nombre, tipo, " ".join(texto.split())))
+    return campos
+
+
+def _descubrir_boton_consultar(html: str) -> str:
+    """
+    Nombre del botón "Consultar" de la pantalla de consumo.
+
+    Igual que en la verificación en dos pasos, el identificador `j_idtNNN`
+    lo genera JSF según la posición del componente en la página y cambia en
+    cuanto EMASESA retoca la pantalla. Si el POST AJAX nombra un botón que
+    ya no existe, JSF no ejecuta la acción de consultar: no aplica las
+    fechas pedidas y se limita a volver a pintar el gráfico que tenga por
+    defecto (el desglose HORARIO del último día publicado), sea cual sea el
+    rango pedido. Por eso se descubre en cada consulta.
+
+    Se prefiere el botón cuyo texto contenga "Consultar"; si no hay ninguno
+    así pero hay un único botón con texto en el formulario, se usa ese. En
+    cualquier otro caso se cae al identificador conocido y se avisa.
+    """
+    botones = [
+        (nombre, texto)
+        for nombre, tipo, texto in _campos_formulario_consulta(html)
+        if tipo in ("submit", "button") and nombre not in (FIELD_DESDE, FIELD_HASTA)
+    ]
+    boton = next((n for n, t in botones if "consultar" in t.lower()), None)
+    if boton is None:
+        con_texto = [n for n, t in botones if t]
+        if len(con_texto) == 1:
+            boton = con_texto[0]
+    if boton is None:
+        _LOGGER.warning(
+            "No se ha encontrado el botón 'Consultar' en la pantalla de consumo de "
+            "EMASESA (botones del formulario: %s); se usa el identificador conocido "
+            "(%s), que puede estar desfasado si el portal ha cambiado",
+            botones or "ninguno",
+            FIELD_CONSULTAR_BTN,
+        )
+        return FIELD_CONSULTAR_BTN
+    if boton != FIELD_CONSULTAR_BTN:
+        _LOGGER.debug(
+            "Botón 'Consultar' de la pantalla de consumo: %s (distinto del conocido, %s)",
+            boton,
+            FIELD_CONSULTAR_BTN,
+        )
+    return boton
 
 
 def _resumen_respuesta(texto: str, limite: int = 600) -> str:
@@ -448,6 +522,12 @@ class EmasesaApiClient:
         # página (evita una petición y un posible cambio de ViewState).
         self._pending_2fa_viewstate: str | None = None
         self._pending_2fa_campos: dict[str, str] | None = None
+        # Botón "Consultar" de la pantalla de consumo, descubierto en la
+        # última página pedida (ver `_descubrir_boton_consultar`), y los
+        # controles de su formulario, para el diagnóstico si aun así la
+        # respuesta no es la esperada.
+        self._boton_consultar: str = FIELD_CONSULTAR_BTN
+        self._campos_consulta: list[tuple[str, str, str]] = []
 
     async def async_login(self) -> None:
         """
@@ -636,15 +716,30 @@ class EmasesaApiClient:
                 html = await resp.text()
         return html
 
+    def _preparar_consulta(self, html: str) -> str:
+        """
+        Lee de la pantalla de consumo lo que necesita el POST de la
+        consulta: devuelve el ViewState y deja apuntado el botón
+        "Consultar" vigente (su `j_idtNNN` cambia si EMASESA retoca la
+        pantalla).
+        """
+        viewstate = _extract_viewstate(html)
+        self._campos_consulta = _campos_formulario_consulta(html)
+        self._boton_consultar = _descubrir_boton_consultar(html)
+        return viewstate
+
     async def _post_consulta(self, desde_str: str, hasta_str: str, viewstate: str) -> str:
         """POST AJAX compartido por la consulta diaria y la horaria."""
-        _LOGGER.debug("Consultando consumo EMASESA %s -> %s", desde_str, hasta_str)
+        boton = self._boton_consultar
+        _LOGGER.debug(
+            "Consultando consumo EMASESA %s -> %s (botón %s)", desde_str, hasta_str, boton
+        )
         payload = {
             "javax.faces.partial.ajax": "true",
-            "javax.faces.source": FIELD_CONSULTAR_BTN,
+            "javax.faces.source": boton,
             "javax.faces.partial.execute": "@all",
             "javax.faces.partial.render": f"{FORM_DATE_ID} {FORM_DATE_ID}:graficoConsumos",
-            FIELD_CONSULTAR_BTN: FIELD_CONSULTAR_BTN,
+            boton: boton,
             FORM_DATE_ID: FORM_DATE_ID,
             FIELD_DESDE: desde_str,
             FIELD_HASTA: hasta_str,
@@ -671,7 +766,7 @@ class EmasesaApiClient:
         peticiones y reutilizar uno viejo es una fuente de fallos raros.
         """
         html = await self._get_consumo_page()
-        viewstate = _extract_viewstate(html)
+        viewstate = self._preparar_consulta(html)
         text = await self._post_consulta(
             desde.strftime(DATE_FMT_EMASESA), hasta.strftime(DATE_FMT_EMASESA), viewstate
         )
@@ -694,7 +789,7 @@ class EmasesaApiClient:
         """
         await self._ensure_login()
         html = await self._get_consumo_page()
-        viewstate = _extract_viewstate(html)
+        viewstate = self._preparar_consulta(html)
 
         max_fecha = _extract_max_fecha(html)
         if max_fecha is not None:
@@ -784,6 +879,21 @@ class EmasesaApiClient:
                 muestra or "ninguna",
                 ", ..." if len(pares) > 4 else "",
             )
+            if _es_vista_horaria(pares) and desde < hasta:
+                # Un rango de varios días contestado en horario suele
+                # significar que el portal no ha ejecutado la consulta (y
+                # ha devuelto su gráfico por defecto). Se vuelcan los
+                # controles del formulario, sin valores, para poder ver
+                # qué ha cambiado en la pantalla sin tener que capturarla.
+                _LOGGER.warning(
+                    "EMASESA ha contestado en horario a un rango de %d días: es "
+                    "probable que no haya ejecutado la consulta. Botón usado: %s. "
+                    "Controles del formulario '%s': %s",
+                    (hasta - desde).days + 1,
+                    self._boton_consultar,
+                    FORM_DATE_ID,
+                    self._campos_consulta or "ninguno",
+                )
         return resultado
 
     async def async_get_hourly_readings(self, dia: date) -> list[dict]:
@@ -799,7 +909,7 @@ class EmasesaApiClient:
         """
         await self._ensure_login()
         html = await self._get_consumo_page()
-        viewstate = _extract_viewstate(html)
+        viewstate = self._preparar_consulta(html)
 
         max_fecha = _extract_max_fecha(html)
         if max_fecha is not None and dia > max_fecha:
